@@ -592,175 +592,175 @@ function getSectionCopy(view: DashboardView): SectionCopy {
     case 'alerts':
       return {
         alerts: {
-          heading: 'Incident Triage Queue',
-          loadingDescription: 'Pulling open incidents from Sentinel central',
-          countDescription: (count) => `${count} open incident${count !== 1 ? 's' : ''} in the triage queue`,
-          emptyStatus: '✓ TRIAGE QUEUE CLEAR',
-          emptyMessage: 'No open incidents are waiting for operator action',
+          heading: 'Alerts Needing Attention',
+          loadingDescription: 'Checking for open alerts',
+          countDescription: (count) => `${count} open alert${count !== 1 ? 's' : ''} may need review`,
+          emptyStatus: '✓ NO OPEN ALERTS',
+          emptyMessage: 'No alerts are waiting for operator action',
         },
         map: {
-          heading: 'Incident Source Map',
-          loadingDescription: 'Resolving incident source nodes',
-          readyDescription: 'Node positions associated with current alert traffic',
+          heading: 'Where Alerts Started',
+          loadingDescription: 'Finding the devices linked to these alerts',
+          readyDescription: 'Device locations linked to current alerts',
         },
         feeds: {
-          heading: 'Alert Source Feeds',
-          loadingDescription: 'Loading source-node feed status',
-          readyDescription: 'Field nodes associated with current alert traffic',
-          emptyMessage: 'No source-node feeds are attached to the current alert queue.',
+          heading: 'Devices Behind These Alerts',
+          loadingDescription: 'Checking the devices linked to these alerts',
+          readyDescription: 'Field devices linked to current alerts',
+          emptyMessage: 'No device feeds are attached to the current alerts.',
         },
         analytics: {
-          heading: 'Alert Pressure Analytics',
-          description: 'Incident volume, severity mix, and central queue pressure for the triage lane.',
+          heading: 'Alert Summary',
+          description: 'How many alerts are open, how serious they are, and whether the system is keeping up.',
         },
         settings: {
-          heading: 'Alert Routing Controls',
-          description: 'Operator-facing notification ownership and central alert link state.',
+          heading: 'Alert Delivery Settings',
+          description: 'Shows whether the main system is ready to send and manage operator alerts.',
         },
       };
     case 'map':
       return {
         alerts: {
-          heading: 'Location-Linked Alerts',
-          loadingDescription: 'Pulling incidents with field-node context',
-          countDescription: (count) => `${count} alert${count !== 1 ? 's' : ''} linked to mapped nodes`,
+          heading: 'Alerts With Locations',
+          loadingDescription: 'Checking alerts with device locations',
+          countDescription: (count) => `${count} alert${count !== 1 ? 's' : ''} linked to mapped devices`,
           emptyStatus: '✓ NO LOCATION ALERTS',
-          emptyMessage: 'No mapped nodes have active incidents right now',
+          emptyMessage: 'No mapped devices have active alerts right now',
         },
         map: {
-          heading: 'Field Positioning Grid',
-          loadingDescription: 'Pulling field-node positions',
-          readyDescription: 'Live central positions projected onto the tactical grid',
+          heading: 'Device Location Map',
+          loadingDescription: 'Loading field device locations',
+          readyDescription: 'Current device locations reported to the main system',
         },
         feeds: {
-          heading: 'Mapped Node Feeds',
-          loadingDescription: 'Loading mapped node feed state',
-          readyDescription: 'Feed readiness for nodes visible on the grid',
-          emptyMessage: 'No mapped field-node feeds are visible yet.',
+          heading: 'Mapped Device Feeds',
+          loadingDescription: 'Checking the devices shown on the map',
+          readyDescription: 'Status for devices currently shown on the map',
+          emptyMessage: 'No mapped device feeds are available yet.',
         },
         analytics: {
-          heading: 'Coverage Analytics',
-          description: 'Mapped device visibility, stale-node pressure, and recovery backlog context.',
+          heading: 'Coverage Summary',
+          description: 'How many devices are visible, online, or not reporting.',
         },
         settings: {
-          heading: 'Map Data Controls',
-          description: 'Runtime state for central device-position reads and refresh cadence.',
+          heading: 'Map Data Settings',
+          description: 'Shows whether device locations are updating from the main system.',
         },
       };
     case 'feeds':
       return {
         alerts: {
-          heading: 'Feed-Triggered Alerts',
-          loadingDescription: 'Pulling feed-linked incidents',
+          heading: 'Alerts From Devices',
+          loadingDescription: 'Checking alerts linked to field devices',
           countDescription: (count) => `${count} feed-linked alert${count !== 1 ? 's' : ''} requiring review`,
           emptyStatus: '✓ FEEDS QUIET',
           emptyMessage: 'No connected feeds are producing active alerts',
         },
         map: {
-          heading: 'Feed Node Locations',
-          loadingDescription: 'Resolving feed-node positions',
-          readyDescription: 'Where visible feed nodes currently sit in the field',
+          heading: 'Device Locations',
+          loadingDescription: 'Finding where devices are reporting from',
+          readyDescription: 'Where visible devices currently sit in the field',
         },
         feeds: {
-          heading: 'Live Feed Matrix',
-          loadingDescription: 'Pulling live field-node feed state',
-          readyDescription: 'Stream readiness, node health, and battery state from central',
-          emptyMessage: 'No live feed nodes are visible from Sentinel central yet.',
+          heading: 'Field Device Status',
+          loadingDescription: 'Checking live field device status',
+          readyDescription: 'Device connection, health, and battery status',
+          emptyMessage: 'No live field devices are visible from Sentinel yet.',
         },
         analytics: {
-          heading: 'Feed Health Analytics',
-          description: 'Device visibility, stale-node pressure, and stream readiness indicators.',
+          heading: 'Device Health Summary',
+          description: 'Which devices are online, not reporting, or need attention.',
         },
         settings: {
-          heading: 'Feed Runtime Controls',
-          description: 'Frontend refresh behavior and backend link state for feed telemetry.',
+          heading: 'Device View Settings',
+          description: 'Shows how often this page refreshes device status from Sentinel.',
         },
       };
     case 'analytics':
       return {
         alerts: {
-          heading: 'Alert Metric Inputs',
-          loadingDescription: 'Pulling incident metrics from central',
-          countDescription: (count) => `${count} incident${count !== 1 ? 's' : ''} contributing to analytics`,
-          emptyStatus: '✓ NO INCIDENT LOAD',
-          emptyMessage: 'There are no active incidents contributing to pressure metrics',
+          heading: 'Alerts Counted Here',
+          loadingDescription: 'Counting current alerts',
+          countDescription: (count) => `${count} alert${count !== 1 ? 's' : ''} included in this summary`,
+          emptyStatus: '✓ NO ACTIVE ALERTS',
+          emptyMessage: 'There are no active alerts affecting the system summary',
         },
         map: {
-          heading: 'Node Metric Inputs',
-          loadingDescription: 'Pulling node state for analytics',
-          readyDescription: 'Device health contributing to central telemetry metrics',
+          heading: 'Devices Counted Here',
+          loadingDescription: 'Checking device health',
+          readyDescription: 'Device health included in this system summary',
         },
         feeds: {
-          heading: 'Feed Metric Inputs',
-          loadingDescription: 'Pulling field-node telemetry inputs',
-          readyDescription: 'Feed and device state currently feeding analytics',
-          emptyMessage: 'No feed telemetry is available for analytics yet.',
+          heading: 'Device Status Counted Here',
+          loadingDescription: 'Checking field device status',
+          readyDescription: 'Device status currently included in this summary',
+          emptyMessage: 'No device status is available for this summary yet.',
         },
         analytics: {
-          heading: 'Central Replay Analytics',
-          description: 'Queue depth, recovery age, ingest pressure, and incident health from Sentinel central.',
+          heading: 'System Health Summary',
+          description: 'How much data is waiting, how old it is, and whether Sentinel is slowing requests.',
         },
         settings: {
-          heading: 'Analytics Runtime Controls',
-          description: 'Control link state and refresh cadence behind the analytics view.',
+          heading: 'System Health Settings',
+          description: 'Shows the connection and refresh settings behind this summary.',
         },
       };
     case 'settings':
       return {
         alerts: {
-          heading: 'Backend Link Alerts',
-          loadingDescription: 'Checking central control link incidents',
-          countDescription: (count) => `${count} backend-visible alert${count !== 1 ? 's' : ''}`,
-          emptyStatus: '✓ CONTROL LINK QUIET',
-          emptyMessage: 'No backend link alerts are visible from central',
+          heading: 'Connection Alerts',
+          loadingDescription: 'Checking for connection-related alerts',
+          countDescription: (count) => `${count} connection alert${count !== 1 ? 's' : ''}`,
+          emptyStatus: '✓ CONNECTION LOOKS GOOD',
+          emptyMessage: 'No connection alerts are visible from Sentinel',
         },
         map: {
-          heading: 'Configured Node Visibility',
-          loadingDescription: 'Checking configured node visibility',
-          readyDescription: 'Device visibility available to the current frontend runtime',
+          heading: 'Devices This Page Can See',
+          loadingDescription: 'Checking which devices this page can see',
+          readyDescription: 'Devices available to this dashboard',
         },
         feeds: {
-          heading: 'Configured Feed Visibility',
-          loadingDescription: 'Checking configured feed visibility',
-          readyDescription: 'Feed telemetry available to the current frontend runtime',
-          emptyMessage: 'No feed telemetry is visible with the current backend configuration.',
+          heading: 'Device Feeds This Page Can See',
+          loadingDescription: 'Checking which device feeds this page can see',
+          readyDescription: 'Device feeds available to this dashboard',
+          emptyMessage: 'No device feeds are visible with the current settings.',
         },
         analytics: {
-          heading: 'Runtime Diagnostics',
-          description: 'Control-plane link health, queue signals, and retry visibility for this dashboard.',
+          heading: 'Connection Check',
+          description: 'Shows whether this dashboard can reach Sentinel and keep itself updated.',
         },
         settings: {
-          heading: 'Control Link Configuration',
-          description: 'Environment-backed backend URL, dashboard key state, and refresh behavior.',
+          heading: 'Dashboard Setup',
+          description: 'Connection status, update timing, and safe server-side settings.',
         },
       };
     default:
       return {
         alerts: {
-          heading: 'Priority Alert Sweep',
-          loadingDescription: 'Pulling central incident queue',
+          heading: 'Priority Alerts',
+          loadingDescription: 'Checking current alerts',
           countDescription: (count) => `${count} alert${count !== 1 ? 's' : ''} requiring attention`,
           emptyStatus: '✓ ALL SYSTEMS NORMAL',
           emptyMessage: 'No active alerts at this time',
         },
         map: {
-          heading: 'Tactical Map',
-          loadingDescription: 'Pulling field-node positions',
-          readyDescription: 'Derived field-node positions from central state',
+          heading: 'Device Map',
+          loadingDescription: 'Loading field device locations',
+          readyDescription: 'Current field device locations',
         },
         feeds: {
-          heading: 'Live Field Feeds',
-          loadingDescription: 'Pulling field-node state from Sentinel central',
-          readyDescription: 'Real-time monitoring of connected field nodes',
-          emptyMessage: 'No field nodes are visible from the central backend yet.',
+          heading: 'Field Devices',
+          loadingDescription: 'Checking field device status',
+          readyDescription: 'Current status for connected field devices',
+          emptyMessage: 'No field devices are visible from Sentinel yet.',
         },
         analytics: {
-          heading: 'Command Telemetry',
-          description: 'Incidents, node visibility, replay pressure, and recovery age in one pass.',
+          heading: 'System Health',
+          description: 'Alerts, device status, and data waiting to be sent in one place.',
         },
         settings: {
-          heading: 'Dashboard Runtime',
-          description: 'Control link state and frontend runtime configuration.',
+          heading: 'Dashboard Setup',
+          description: 'Connection state and page update settings.',
         },
       };
   }
@@ -771,32 +771,32 @@ function getViewMeta(view: DashboardView) {
     case 'alerts':
       return {
         title: 'Active Alerts',
-        description: 'Open Sentinel incidents requiring operator attention',
+        description: 'Alerts that may need a person to review or respond',
       };
     case 'map':
       return {
-        title: 'Location Map',
-        description: 'Field-node positioning in the current central control window',
+        title: 'Device Map',
+        description: 'Where field devices are currently reporting from',
       };
     case 'feeds':
       return {
-        title: 'Field Feeds',
-        description: 'Connected device feed placeholders, status, and battery telemetry',
+        title: 'Field Devices',
+        description: 'Device connection, battery, and health status',
       };
     case 'analytics':
       return {
-        title: 'System Analytics',
-        description: 'Central replay pressure, recovery age, and incident metrics',
+        title: 'System Health',
+        description: 'A simple view of alerts, device health, and data waiting to send',
       };
     case 'settings':
       return {
-        title: 'Dashboard Settings',
-        description: 'Runtime link state and frontend control configuration',
+        title: 'Dashboard Setup',
+        description: 'Connection state and page update settings',
       };
     default:
       return {
-        title: 'Command Center Dashboard',
-        description: 'Live Sentinel incidents, field nodes, and control-plane telemetry',
+        title: 'Command Center',
+        description: 'Live Sentinel alerts, field devices, and system health in one place',
       };
   }
 }
@@ -850,5 +850,5 @@ function getErrorMessage(error: unknown) {
     return error.message;
   }
 
-  return 'Unable to reach the Sentinel control backend.';
+  return 'Unable to reach the main Sentinel system.';
 }

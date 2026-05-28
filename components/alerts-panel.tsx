@@ -17,22 +17,22 @@ interface Alert {
 const initialAlerts: Alert[] = [
   {
     id: '1',
-    title: 'Critical Incident Detected',
-    description: 'edge-node-12 replayed a high-confidence incident at North Gate',
+    title: 'Urgent Alert Detected',
+    description: 'Device 12 reported a high-confidence alert at North Gate',
     level: 'high',
     timestamp: new Date(Date.now() - 2 * 60000).toLocaleTimeString(),
   },
   {
     id: '2',
     title: 'Low Battery Alert',
-    description: 'edge-node-09 battery is below operating threshold',
+    description: 'Device 09 battery is low',
     level: 'medium',
     timestamp: new Date(Date.now() - 5 * 60000).toLocaleTimeString(),
   },
   {
     id: '3',
-    title: 'GPS Location Update',
-    description: 'All units have been repositioned per dispatch orders',
+    title: 'Location Update',
+    description: 'Field devices have reported updated locations',
     level: 'low',
     timestamp: new Date(Date.now() - 10 * 60000).toLocaleTimeString(),
   },
@@ -52,7 +52,7 @@ export function AlertsPanel({
   incidents,
   loading = false,
   heading = 'Active Alerts',
-  loadingDescription = 'Pulling central incident queue',
+  loadingDescription = 'Checking current alerts',
   countDescription = (count) => `${count} alert${count !== 1 ? 's' : ''} requiring attention`,
   emptyStatus = '✓ ALL SYSTEMS NORMAL',
   emptyMessage = 'No active alerts at this time',
@@ -155,7 +155,7 @@ function mapIncidentToAlert(incident: IncidentSummary): Alert {
   return {
     id: String(incident.incidentId),
     title: titleCase(incident.eventType),
-    description: `${incident.locationLabel ?? 'unknown site'} - ${incident.nodeId ?? 'unassigned node'} - ${(incident.confidence * 100).toFixed(0)}% confidence`,
+    description: `Site: ${incident.locationLabel ?? 'unknown site'} - Device: ${incident.nodeId ?? 'not assigned'} - Confidence: ${(incident.confidence * 100).toFixed(0)}%`,
     level:
       incident.priority === 'critical'
         ? 'high'

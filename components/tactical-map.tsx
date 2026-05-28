@@ -35,9 +35,9 @@ interface TacticalMapProps {
 export function TacticalMap({
   devices,
   loading = false,
-  heading = 'Tactical Map',
-  loadingDescription = 'Pulling field-node positions',
-  readyDescription = 'Derived field-node positions from central state',
+  heading = 'Device Map',
+  loadingDescription = 'Loading field device locations',
+  readyDescription = 'Current field device locations',
 }: TacticalMapProps) {
   const nodes = devices == null ? mockNodes : devices.slice(0, 18).map(mapDeviceToNodeMarker);
   const activeCount = nodes.filter((node) => node.status === 'active').length;
@@ -120,11 +120,11 @@ export function TacticalMap({
         <div className="mt-4 grid grid-cols-2 gap-4 pt-4 border-t border-cyan-400/20">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-green-400 shadow-[0_0_8px_rgba(0,255,136,0.5)]" />
-            <span className="text-xs text-gray-400">Active Node</span>
+            <span className="text-xs text-gray-400">Device Online</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-gray-400" />
-            <span className="text-xs text-gray-400">Inactive</span>
+            <span className="text-xs text-gray-400">Not Reporting</span>
           </div>
         </div>
       </TacticalCard>

@@ -24,10 +24,10 @@ export function DashboardSidebar({ activeView, onCollapse, onViewChange }: Dashb
   const menuItems: Array<{ view: DashboardView; label: string; icon: typeof BarChart3 }> = [
     { view: 'overview', label: 'Overview', icon: BarChart3 },
     { view: 'alerts', label: 'Alerts', icon: AlertCircle },
-    { view: 'map', label: 'Location Map', icon: Map },
-    { view: 'feeds', label: 'Field Feeds', icon: Radio },
-    { view: 'analytics', label: 'Analytics', icon: Activity },
-    { view: 'settings', label: 'Settings', icon: Settings },
+    { view: 'map', label: 'Device Map', icon: Map },
+    { view: 'feeds', label: 'Field Devices', icon: Radio },
+    { view: 'analytics', label: 'System Health', icon: Activity },
+    { view: 'settings', label: 'Setup', icon: Settings },
   ];
 
   return (
@@ -82,7 +82,7 @@ export function DashboardSidebar({ activeView, onCollapse, onViewChange }: Dashb
       {/* Bottom Items */}
       <div className="border-t border-sidebar-border p-3 space-y-2">
         <div className="px-3 py-2 text-xs font-mono text-gray-500">
-          {collapsed ? 'LIVE' : 'Single-route dynamic view'}
+          {collapsed ? 'LIVE' : 'One-page dashboard'}
         </div>
       </div>
     </motion.aside>

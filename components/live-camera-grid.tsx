@@ -18,12 +18,12 @@ interface CameraFeed {
 }
 
 const mockCameras: CameraFeed[] = [
-  { id: '1', label: 'Edge Node 12', unit: 'node-12', location: 'North Gate', status: 'active', batteryLevel: 85 },
-  { id: '2', label: 'Edge Node 7', unit: 'node-07', location: 'Downtown', status: 'active', batteryLevel: 92 },
-  { id: '3', label: 'Edge Node 15', unit: 'node-15', location: 'Harbor District', status: 'active', batteryLevel: 72 },
-  { id: '4', label: 'Edge Node 9', unit: 'node-09', location: 'Industrial Area', status: 'warning', batteryLevel: 35 },
-  { id: '5', label: 'Edge Node 3', unit: 'node-03', location: 'Residential', status: 'active', batteryLevel: 88 },
-  { id: '6', label: 'Edge Node 21', unit: 'node-21', location: 'Commercial', status: 'inactive', batteryLevel: 0 },
+  { id: '1', label: 'Field Device 12', unit: 'node-12', location: 'North Gate', status: 'active', batteryLevel: 85 },
+  { id: '2', label: 'Field Device 7', unit: 'node-07', location: 'Downtown', status: 'active', batteryLevel: 92 },
+  { id: '3', label: 'Field Device 15', unit: 'node-15', location: 'Harbor District', status: 'active', batteryLevel: 72 },
+  { id: '4', label: 'Field Device 9', unit: 'node-09', location: 'Industrial Area', status: 'warning', batteryLevel: 35 },
+  { id: '5', label: 'Field Device 3', unit: 'node-03', location: 'Residential', status: 'active', batteryLevel: 88 },
+  { id: '6', label: 'Field Device 21', unit: 'node-21', location: 'Commercial', status: 'inactive', batteryLevel: 0 },
 ];
 
 interface LiveCameraGridProps {
@@ -38,10 +38,10 @@ interface LiveCameraGridProps {
 export function LiveCameraGrid({
   devices,
   loading = false,
-  heading = 'Live Field Feeds',
-  loadingDescription = 'Pulling field-node state from Sentinel central',
-  readyDescription = 'Real-time monitoring of connected field nodes',
-  emptyMessage = 'No field nodes are visible from the central backend yet.',
+  heading = 'Field Devices',
+  loadingDescription = 'Checking field device status',
+  readyDescription = 'Current status for connected field devices',
+  emptyMessage = 'No field devices are visible from Sentinel yet.',
 }: LiveCameraGridProps) {
   const [muted, setMuted] = useState<Set<string>>(new Set());
   const [fullscreen, setFullscreen] = useState<string | null>(null);
@@ -106,7 +106,7 @@ export function LiveCameraGrid({
               <div className="relative bg-black aspect-video rounded mb-3 overflow-hidden group">
                 <div className="absolute inset-0 flex items-center justify-center text-gray-500">
                   <div className="text-center">
-                    <div className="text-sm font-mono mb-2">STREAM ENDPOINT PENDING</div>
+                    <div className="text-sm font-mono mb-2">CAMERA NOT CONNECTED YET</div>
                     <div className="w-16 h-16 border-2 border-cyan-400/30 rounded mx-auto" />
                   </div>
                 </div>
