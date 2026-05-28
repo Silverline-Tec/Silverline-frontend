@@ -1,0 +1,90 @@
+---
+title: "10. Dashboard API"
+description: "All REST endpoints, query parameters, status transition rules, device health, and stats."
+section: "API"
+order: 11
+---
+
+# 10. Dashboard API
+
+This section describes the **operator-facing API surface**. These endpoints sit downstream of the core ingest/worker/outbox pipeline and exist to support monitoring, review, and controlled status updates after incidents have been recorded.
+
+## 10.1 Endpoint Summary
+
+| Method + Path | Purpose |
+|---------------|---------|
+| `GET /api/incidents` | Paginated, filtered incident list |
+| `GET /api/incidents/:id` | Full incident detail with linked alerts |
+| `PATCH /api/incidents/:id/status` | Controlled status transition |
+| `GET /api/devices` | All nodes with stale detection |
+| `GET /api/stats` | Dashboard rollup counts |
+| `GET /api/webhooks` | List configured webhook destinations |
+| `POST /api/webhooks` | Register new webhook destination |
+| `DELETE /api/webhooks/:id` | Soft-delete webhook (`active=false`) |
+
+## 10.2 GET /api/incidents — Query Parameters
+
+| Parameter | Type / Default | Notes |
+|-----------|----------------|-------|
+| `node_id` | string \| null | Filter by camera node. |
+| `event_type` | string \| null | Filter by classification. |
+| `status` | `open` \| `acknowledged` \| `closed` \| null | Filter by workflow status. |
+| `priority` | `low` \| `high` \| `critical` \| null | Filter by priority. |
+| `from_ts` | ISO 8601 \| null | `received_at_utc >= from_ts`. |
+| `to_ts` | ISO 8601 \| null | `received_at_utc <= to_ts`. |
+| `limit` | integer \| default 50 \| max 200 | Results per page. |
+| `offset` | integer \| default 0 | Pagination offset. |
+
+```sql
+SELECT i.id AS incident_id, i.node_id, i.event_type, i.confidence,
+       i.priority, i.status, i.received_at_utc, i.dedup_uncertain,
+       l.label AS location_label
+FROM incidents i
+LEFT JOIN locations l ON l.node_id = i.node_id
+WHERE 1=1
+  AND (:node_id    IS NULL OR i.node_id    = :node_id)
+  AND (:event_type IS NULL OR i.event_type = :event_type)
+  AND (:status     IS NULL OR i.status     = :status)
+  AND (:priority   IS NULL OR i.priority   = :priority)
+  AND (:from_ts    IS NULL OR i.received_at_utc >= :from_ts)
+  AND (:to_ts      IS NULL OR i.received_at_utc <= :to_ts)
+ORDER BY i.received_at_utc DESC
+LIMIT :limit OFFSET :offset;
+```
+
+## 10.3 PATCH /api/incidents/:id/status — Transition Rules
+
+| From | To | Allowed | HTTP on Violation |
+|------|----|---------|-------------------|
+| `open` | `acknowledged` | ✅ Yes | — |
+| `acknowledged` | `closed` | ✅ Yes | — |
+| `open` | `closed` | ❌ No — must acknowledge first | `409 Conflict` |
+| `closed` | any | ❌ No — closed is terminal | `409 Conflict` |
+
+## 10.4 GET /api/stats
+
+```sql
+SELECT
+    COUNT(*)                                             AS total_incidents,
+    COUNT(*) FILTER (WHERE status   = 'open')           AS open_incidents,
+    COUNT(*) FILTER (WHERE priority = 'critical')       AS critical_incidents,
+    COUNT(*) FILTER (WHERE received_at_utc >= NOW() - INTERVAL '1 hour')
+                                                         AS incidents_last_hour,
+    (SELECT COUNT(*) FROM devices WHERE status = 'active')     AS active_devices,
+    (SELECT COUNT(*) FROM devices
+     WHERE last_seen_at < NOW() - INTERVAL '10 minutes') AS stale_devices
+FROM incidents;
+```
+
+## 10.5 GET /api/devices — Stale Detection
+
+```sql
+SELECT d.node_id, d.name, d.status, d.last_seen_at, d.battery_level,
+       l.label AS location_label,
+       (d.last_seen_at < NOW() - INTERVAL '10 minutes') AS is_stale
+FROM devices d
+LEFT JOIN locations l ON l.node_id = d.node_id
+ORDER BY d.last_seen_at DESC NULLS LAST;
+
+-- is_stale computed at query time. Never stored as a column.
+```

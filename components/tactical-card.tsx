@@ -17,17 +17,17 @@ export function TacticalCard({
   interactive = false,
 }: TacticalCardProps) {
   const glowClasses = {
-    cyan: 'border-cyan-400/30 shadow-[0_0_15px_rgba(0,212,255,0.3),inset_0_0_15px_rgba(0,212,255,0.1)]',
-    red: 'border-red-500/40 shadow-[0_0_15px_rgba(255,23,68,0.4),inset_0_0_15px_rgba(255,23,68,0.1)]',
-    green: 'border-green-400/30 shadow-[0_0_15px_rgba(0,255,136,0.3),inset_0_0_15px_rgba(0,255,136,0.1)]',
+    cyan: 'border-white/[0.07]',
+    red: 'border-red-400/30 bg-red-500/5',
+    green: 'border-brand-500/20 bg-brand-500/5',
   };
 
   return (
     <div
       className={cn(
-        'border backdrop-blur-md bg-card/40 rounded-md p-4 transition-all duration-300',
+        'border bg-[#0f1215] rounded-md p-4 transition-all duration-300',
         glowClasses[glow],
-        interactive && 'hover:shadow-[0_0_20px_rgba(0,212,255,0.5)] cursor-pointer hover:border-cyan-300/50',
+        interactive && 'cursor-pointer hover:bg-white/[0.04] hover:border-brand-500/30',
         className
       )}
     >

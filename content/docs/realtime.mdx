@@ -1,0 +1,97 @@
+---
+title: "9. Real-Time Layer"
+description: "Elixir/Phoenix, Redis subscriber GenServer, WebSocket channels, and backlog delivery."
+section: "Real-Time"
+order: 10
+---
+
+# 9. Real-Time Layer — Elixir / Phoenix
+
+One responsibility: subscribe to `incidents:new`, receive the payload from the outbox dispatcher, broadcast to dashboard WebSocket clients. **No business logic. No DB writes. No alerting.**
+
+<Callout type="info" title="Central-Service Only">
+  The Phoenix realtime layer exists only in the **central control-plane** profile. The edge profile does not run this service locally; it may optionally replay accepted events upstream so the central stack can publish them in real time.
+</Callout>
+
+## 9.1 Redis Subscriber GenServer
+
+```elixir
+defmodule Sentinel.RedisSubscriber do
+  use GenServer
+
+  def init(_) do
+    {:ok, conn} = Redix.start_link(System.get_env("REDIS_URL"))
+    Redix.subscribe(conn, "incidents:new", self())
+    {:ok, %{conn: conn}}
+  end
+
+  def handle_info({:redix_pubsub, _, _, :message, %{payload: p}}, state) do
+    case Jason.decode(p) do
+      {:ok, incident} ->
+        SentinelWeb.Endpoint.broadcast("incidents:live", "new_incident", incident)
+      {:error, reason} ->
+        Logger.error("Bad payload: #{inspect(reason)}")
+    end
+    {:noreply, state}
+  end
+end
+
+# Supervised :one_for_one — crashes trigger automatic restart and resubscription.
+# Events during crash window not replayed to live stream;
+# they appear on next load via the PostgreSQL backlog query.
+```
+
+## 9.2 Phoenix Channel and Backlog
+
+```elixir
+defmodule SentinelWeb.IncidentChannel do
+  use Phoenix.Channel
+
+  def join("incidents:live", _params, socket) do
+    send(self(), :after_join)
+    {:ok, socket}
+  end
+
+  def handle_info(:after_join, socket) do
+    push(socket, "backlog", %{incidents: Sentinel.Incidents.last_n(50)})
+    {:noreply, socket}
+  end
+end
+
+# Backlog query — same 9-field shape as live event
+from(i in "incidents",
+  left_join: l in "locations", on: l.node_id == i.node_id,
+  order_by: [desc: i.received_at_utc], limit: ^n,
+  select: %{
+    incident_id: i.id, node_id: i.node_id, event_type: i.event_type,
+    confidence: i.confidence, priority: i.priority, status: i.status,
+    received_at_utc: i.received_at_utc, location_label: l.label,
+    dedup_uncertain: i.dedup_uncertain
+  }
+) |> Repo.all()
+```
+
+## 9.3 Canonical Real-Time Payload
+
+Identical shape for both live events and backlog items. **Frontend uses one rendering component for both.**
+
+```json
+// Live:    { "event": "new_incident", "payload": { ...9 fields... } }
+// Backlog: { "event": "backlog",      "payload": { "incidents": [{ ...9 fields... }] } }
+
+{
+    "incident_id":     "int",
+    "node_id":         "string",
+    "event_type":      "string",   // lowercase_snake
+    "confidence":      "float",
+    "priority":        "string",   // "low" | "high" | "critical"
+    "status":          "string",   // always "open" on first publish
+    "received_at_utc": "string",   // ISO 8601
+    "location_label":  "string | null",
+    "dedup_uncertain": "bool"
+}
+```
+
+<Callout type="warning" title="Crash Window">
+  Events published to `incidents:new` during a Phoenix subscriber crash are **not replayed** to the live stream. They appear on the next page load via the PostgreSQL backlog query. For guaranteed live delivery, switch to Redis Streams — see §13.3 Known Constraints.
+</Callout>

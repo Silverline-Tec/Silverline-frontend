@@ -1,0 +1,133 @@
+---
+title: "Appendix A: End-to-End Data Flow"
+description: "Complete annotated trace from field camera through operator notification."
+section: "Reference"
+order: 17
+---
+
+# Appendix A: End-to-End Data Flow
+
+Complete trace: **field camera → operator notification**, with both the central full-stack path and the edge-to-central replay variant.
+
+## Full Annotated Trace — Central Control-Plane
+
+```
+[ESP32 Camera Node]
+  Local ML inference → nested mesh packet
+  LoRa transmission → mesh relay → Leader receiver
+
+[LoRa Mesh / Leader]                                     (§4)
+  A. flood discovery using seen-message cache + TTL
+  B. Leader receives packet, records hop path, sends reverse-route ACK
+  C. Intermediate nodes cache route; ACK timeout triggers rediscovery
+  D. Leader appends received record to local buffer while backhaul may be absent
+
+[Leader / Gateway — Transformation Layer]               (§4)
+  1. Decode LoRa frame → nested mesh packet
+  2. transform_mesh_payload()                           flatten + derive priority
+     Returns None on unknown event_type → log and discard
+  3. sign_payload()                                     canonical string + HMAC-SHA256
+  4. POST /ingest with canonical JSON body + signature headers
+
+[Nginx]
+  5. TLS termination → proxy to api:8000
+
+[FastAPI Ingestion API]                                 (§5)
+  6.  require_gateway_key()                             validate X-API-Key
+  7.  verify_gateway_signature()                        validate HMAC, 300s window
+  8.  denylist + ingress rate-limit check               reject revoked or abusive nodes
+  9.  Pydantic validation (tiered + timestamp window)
+  10. Compute received_at_utc, event_time_utc, clock_drift_ms
+  11. INSERT INTO devices ON CONFLICT DO UPDATE last_seen_at
+  12. INSERT INTO logs → capture _log_id (RETURNING id)
+  13. enqueue_incident(payload with _log_id)
+      OR INSERT INTO recovery_queue on Redis failure
+  14. Return 200 { status: accepted, request_id: <_log_id> }
+
+[Redis Queue "incidents"]
+  15. Payload sits in queue
+
+[RQ Processing Worker]                                  (§6, §7)
+  16. build_dedup_key(evidence_ref > ts_bucket > request_id)
+  17. BEGIN TRANSACTION
+        UPSERT incidents → get incident row + transmission_count
+        UPDATE logs SET outcome=accepted/duplicate WHERE id=_log_id
+        IF transmission_count == 1:
+          INSERT INTO outbox (realtime)
+          FOR each matching alert rule (not rate-limited):
+            INSERT INTO alerts (pending)
+            INSERT INTO outbox (sms | webhook) — ON CONFLICT dedupe_key DO NOTHING
+      COMMIT
+
+[Outbox Dispatcher]                                     (§8)
+  18. SELECT FROM outbox WHERE status=pending FOR UPDATE SKIP LOCKED
+
+      Realtime row:
+  19. PUBLISH incidents:new → 9-field payload
+      mark outbox sent
+
+      SMS row:
+  20. POST Africa's Talking → up to 3 × 30s retry
+      Success → alerts status=sent; outbox status=sent
+      Failure → alerts status=failed_at_fallback
+                PUBLISH alerts:gsm_fallback → gateway → SIM800L
+                outbox status=sent
+
+      Webhook row (one per destination):
+  21. HTTPS POST to webhook URL → up to 3 × 30s retry
+      Success/Fail → alerts + outbox updated independently per destination
+
+[Elixir RedisSubscriber]                                (§9)
+  22. Receive incidents:new pubsub message
+  23. SentinelWeb.Endpoint.broadcast("incidents:live", "new_incident", payload)
+
+[Dashboard WebSocket Client]
+  24. Receives new_incident → renders live incident card
+
+[Operator]
+  25. Sees incident on dashboard (target: <2 s from POST /ingest)
+  26. Receives SMS alert
+  27. PATCH /api/incidents/:id/status → { status: acknowledged }
+```
+
+## Edge Profile Variant — Local Accept, Local Process, Optional Central Replay
+
+```
+[Edge API]
+  1. Accept signed POST /ingest using the same contract as the central API
+  2. Apply denylist, ingress rate limits, anomaly detection, and canonical payload shaping
+  3. INSERT INTO logs → capture _log_id
+  4. INSERT canonical payload INTO edge_spool
+  5. Return 200 { status: accepted, request_id: <_log_id> }
+
+[sentinel-agent]
+  6. Claim edge_spool rows in FIFO order
+  7. Upsert local incidents in SQLite
+  8. UPDATE logs SET outcome=accepted/duplicate WHERE id=_log_id
+  9. IF uplink configured: INSERT INTO outbox (uplink) for every accepted event
+  10. IF transmission_count == 1:
+        INSERT realtime / sms / webhook outbox rows
+  11. Drain outbox locally
+        - realtime → optional Redis publish
+        - sms/webhook → local delivery attempts
+        - uplink → signed POST /ingest to central control-plane
+
+[Central Control-Plane]
+  12. Receives uplink replay through the same signed ingest contract
+  13. Runs the normal Redis worker / outbox / realtime pipeline
+  14. Dashboard and operator surfaces update centrally once replay succeeds
+```
+
+## Appendix B: Revision History
+
+| Version | Date | Summary of Changes |
+|---------|------|--------------------|
+| v1 | May 2026 | Initial architecture. Issues: API wrote incident rows; Redis failure path undefined; incomplete logging; mixed enum casing. |
+| v2 | May 2026 | Worker owns incidents. `recovery_queue` table. Full HTTP logging (422, 403). Flattened lowercase payload. Two-phase deploy bootstrap. |
+| v3 | May 2026 | Exact `_log_id` log correlation. All side effects gated on `transmission_count == 1`. `clock_drift_ms` computed in API handler. Webhook alert rows. Redis rate limiter. Pinned Docker volume names. |
+| Addendum A | May 2026 | Documented gateway payload transformation (`transform.py`) and `X-Gateway-Signature` signing + backend verification. |
+| **1.0 Final** | **May 2026** | Single source of truth. Adds: transactional outbox for retry-safe side effects; per-destination webhook alert rows; enforced status transition state machine; Redis-backed rate limiting; `request_id` as stable anchorless dedup key; complete end-to-end annotated trace. **Supersedes all prior versions.** |
+| **1.1 Review** | **May 2026** | Adds production hardening requirements: explicit blast radius, per-node key rotation, denylist enforcement, timestamp trust policy, retention windows, observability minimums, scale-test target, and incident-response playbooks. |
+| **1.2 Review** | **May 2026** | Expands time-sync protocol details, adds a readiness scorecard, observability requirements, data governance controls, and a pre-deployment validation checklist. |
+| **1.3 Review** | **May 2026** | Adds a rendered architecture diagram, explicit FTSP default values, data residency guidance, chaos-drill guidance, and a sample OpenAPI artifact for hardware-team integration. |
+| **1.4 Review** | **May 2026** | Adds the SQLite-backed edge profile, merged `sentinel-agent`, edge `uplink` outbox channel, central replay through the signed ingest contract, and deployment/testing guidance for split edge + control-plane operation. |

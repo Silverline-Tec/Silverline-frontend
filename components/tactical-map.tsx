@@ -46,34 +46,34 @@ export function TacticalMap({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-cyan-300 mb-2 flex items-center gap-2">
+          <h2 className="font-display text-lg font-bold text-white mb-2 flex items-center gap-2">
             <MapPin className="w-6 h-6" />
             {heading}
           </h2>
-          <p className="text-gray-400 text-sm">
+          <p className="text-zinc-500 text-sm">
             {loading && nodes.length === 0
               ? loadingDescription
               : readyDescription}
           </p>
         </div>
-        <div className="flex items-center gap-2 px-3 py-1 rounded border border-cyan-400/30 bg-cyan-400/5">
-          <Grid3x3 className="w-4 h-4 text-cyan-400" />
-          <span className="text-xs text-cyan-300 font-mono">{activeCount} ACTIVE</span>
+        <div className="flex items-center gap-2 px-3 py-1 rounded-full border border-brand-500/20 bg-brand-500/5">
+          <Grid3x3 className="w-4 h-4 text-brand-400" />
+          <span className="text-xs text-brand-400 font-mono">{activeCount} ACTIVE</span>
         </div>
       </div>
 
       <TacticalCard glow="cyan">
-        <div className="relative w-full aspect-square bg-black/50 rounded overflow-hidden border border-cyan-400/20">
+        <div className="relative w-full aspect-square bg-[#0a0c0e] rounded overflow-hidden border border-white/[0.07]">
           {/* Grid background */}
           <div className="absolute inset-0 opacity-20 hud-grid" />
 
           {/* Coordinate labels */}
-          <div className="absolute top-2 left-2 text-xs text-cyan-400 font-mono">GRID: A1</div>
-          <div className="absolute bottom-2 right-2 text-xs text-cyan-400 font-mono">SCALE: 1:1000</div>
+          <div className="absolute top-2 left-2 text-xs text-brand-400 font-mono">GRID: A1</div>
+          <div className="absolute bottom-2 right-2 text-xs text-brand-400 font-mono">SCALE: 1:1000</div>
 
           {/* Compass rose */}
-          <div className="absolute top-4 right-4 w-12 h-12 border border-cyan-400/20 rounded-full flex items-center justify-center">
-            <div className="text-xs font-mono text-cyan-400">N</div>
+          <div className="absolute top-4 right-4 w-12 h-12 border border-white/[0.07] rounded-full flex items-center justify-center">
+            <div className="text-xs font-mono text-brand-400">N</div>
           </div>
 
           {/* Node markers */}
@@ -88,11 +88,11 @@ export function TacticalMap({
             >
               <div className={`relative w-6 h-6 rounded-full flex items-center justify-center ${
                 node.status === 'active'
-                  ? 'bg-green-500/20 border border-green-400 shadow-[0_0_10px_rgba(0,255,136,0.4)]'
-                  : 'bg-gray-500/20 border border-gray-400 shadow-[0_0_10px_rgba(100,116,139,0.2)]'
+                  ? 'bg-brand-500/15 border border-brand-500/40'
+                  : 'bg-zinc-500/15 border border-zinc-500/40'
               }`}>
                 <div className={`w-2 h-2 rounded-full ${
-                  node.status === 'active' ? 'bg-green-400' : 'bg-gray-400'
+                  node.status === 'active' ? 'bg-brand-400' : 'bg-zinc-400'
                 }`} />
 
                 {/* Hover tooltip */}
@@ -101,7 +101,7 @@ export function TacticalMap({
                   whileHover={{ opacity: 1, y: -20 }}
                   className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 pointer-events-none"
                 >
-                  <div className="bg-black/80 border border-cyan-400/50 rounded px-2 py-1 text-xs text-cyan-300 font-mono whitespace-nowrap">
+                  <div className="bg-[#0f1215]/95 border border-brand-500/30 rounded px-2 py-1 text-xs text-brand-400 font-mono whitespace-nowrap">
                     {node.unit} - {node.name}
                   </div>
                 </motion.div>
@@ -111,20 +111,20 @@ export function TacticalMap({
 
           {/* Center crosshair */}
           <div className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 w-6 h-6">
-            <div className="absolute inset-0 border border-cyan-400/20 rounded-full" />
-            <div className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 w-1 h-1 bg-cyan-400/40 rounded-full" />
+            <div className="absolute inset-0 border border-white/[0.07] rounded-full" />
+            <div className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 w-1 h-1 bg-brand-400/40 rounded-full" />
           </div>
         </div>
 
         {/* Legend */}
-        <div className="mt-4 grid grid-cols-2 gap-4 pt-4 border-t border-cyan-400/20">
+        <div className="mt-4 grid grid-cols-2 gap-4 pt-4 border-t border-white/[0.07]">
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-green-400 shadow-[0_0_8px_rgba(0,255,136,0.5)]" />
-            <span className="text-xs text-gray-400">Device Online</span>
+            <div className="w-3 h-3 rounded-full bg-brand-400" />
+            <span className="text-xs text-zinc-500">Device Online</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-gray-400" />
-            <span className="text-xs text-gray-400">Not Reporting</span>
+            <div className="w-3 h-3 rounded-full bg-zinc-400" />
+            <span className="text-xs text-zinc-500">Not Reporting</span>
           </div>
         </div>
       </TacticalCard>

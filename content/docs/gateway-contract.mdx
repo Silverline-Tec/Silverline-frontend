@@ -1,0 +1,210 @@
+---
+title: "4. Gateway Contract & Payload Transformation"
+description: "Mesh packet to flat schema transformation, signing, and backend verification."
+section: "Integration"
+order: 5
+---
+
+# 4. Gateway Contract and Payload Transformation
+
+## 4.1 Mesh Packet Format (Leader Input)
+
+```json
+{
+  "node": "CAM-NODE-07",            // uppercase, hyphens
+  "ts": 1746432000,                 // Unix epoch seconds, device RTC (may drift)
+  "event": {                        // nested event object
+    "type": "perimeter_intrusion",
+    "zone": "north_fence",          // MESH LAYER FIELD — stripped at gateway
+    "confidence": 0.93,
+    "subject": "person"             // MESH LAYER FIELD — stripped at gateway
+  },
+  "evidence_ref": "clip_2026_05_05_184210",
+  "seq": 1041,                      // STRIPPED — transport counter, not business key
+  "ack_req": true
+}
+```
+
+## 4.1.1 Mesh Routing Envelope
+
+Before the Leader unwraps the business payload above, the radio frame carries a mesh envelope used for routing and radio-layer de-duplication.
+
+| Field | Size | Purpose | Forwarded to Backend |
+|-------|------|---------|----------------------|
+| Header | 4 bytes | Magic bytes + protocol version | No |
+| Source ID | 2 bytes | Originating node address | No |
+| Dest ID | 2 bytes | Target node address (`0x0000` = Leader) | No |
+| Message ID | 4 bytes | Unique radio message ID for seen-message cache | No |
+| Hop Count | 1 byte | Current hop depth | No |
+| TTL | 1 byte | Decremented each hop to limit flood radius | No |
+| JSON Payload | Up to 222 bytes | Application payload shown in §4.1 | Yes |
+| CRC-16 | 2 bytes | Error detection | No |
+
+The backend contract begins only after the Leader unwraps this envelope and validates the radio-layer integrity checks.
+
+## 4.1.2 Production Mesh Authentication Envelope
+
+The mesh packet above is the business payload. In production, the radio frame must also carry authentication metadata that the gateway verifies **before** `transform_mesh_payload()` runs.
+
+| Field | Purpose | Forwarded to Backend |
+|-------|---------|----------------------|
+| `node` | Stable node identity used to look up the secret | Yes → normalized to `node_id` |
+| `key_version` | Supports quarterly rotation and overlap windows | No |
+| `auth_tag` | HMAC over the canonical mesh packet using the node-specific secret | No |
+| `seq` | Monotonic transport counter used for replay detection | No |
+
+Per-node keys and rotation policy are defined in §12.2.
+
+## 4.1.3 Leader Relay Behavior
+
+The current radio design uses a simple but concrete relay flow:
+
+1. A node broadcasts a packet with a unique `message_id`.
+2. Receiving nodes consult a **seen-message cache** and re-broadcast only unseen packets.
+3. The Leader records the hop path and sends an acknowledgement back along the reverse route.
+4. Intermediate nodes cache the shortest known route to the Leader.
+5. If no acknowledgement returns before timeout, the node clears the cached route and starts flood discovery again.
+
+This matters to the backend because radio-level `message_id` and route metadata explain why a single business event may traverse several nodes before it becomes one HTTP ingest request.
+
+## 4.2 Flat Backend Ingest Schema (Leader Output)
+
+```json
+{
+  "node_id":      "cam-node-07",           // lowercase
+  "event_type":   "perimeter_intrusion",   // promoted from event.type
+  "confidence":   0.93,                    // promoted from event.confidence
+  "ts":           1746432000,
+  "evidence_ref": "clip_2026_05_05_184210",
+  "priority":     "high",                  // derived from confidence
+  "ack_req":      true
+}
+// Stripped: event.zone, event.subject, seq, message_id, hop_count, ttl, crc
+```
+
+## 4.3 Field Transformation Rules
+
+| Output Field | Source | Rule |
+|--------------|--------|------|
+| `node_id` | `node` | Lowercase. Preserve hyphens. Strip whitespace. |
+| `event_type` | `event.type` | Promote from nested object. Must match `KNOWN_EVENT_TYPES`. Drop if unknown. |
+| `confidence` | `event.confidence` | Promote from nested object. Float 0.0–1.0. |
+| `ts` | `ts` | Pass through unchanged. Omit if absent from mesh packet. |
+| `evidence_ref` | `evidence_ref` | Pass through unchanged. Strongly recommended. |
+| `priority` | Derived | `<0.50 → low` · `0.50–0.79 → high` · `≥0.80 → critical` |
+| `ack_req` | `ack_req` | Pass through unchanged. Boolean. |
+| `event.zone` | **STRIP** | Mesh-layer field. Never forwarded. |
+| `event.subject` | **STRIP** | Mesh-layer field. Never forwarded. |
+| `seq` | **STRIP** | Transport counter. Never used for dedup. Never forwarded. |
+| `message_id` / `hop_count` / `ttl` / `crc` | **STRIP** | Radio-layer routing / integrity metadata. Persist separately only if the ingest contract is extended for telemetry. |
+
+<Callout type="warning" title="Coordination Required">
+  `KNOWN_EVENT_TYPES` in `gateway/transform.py` must match `EventType` enum in `models/ingest.py`. Update both simultaneously when firmware adds a new event type. A mismatch causes **silent drops** at the gateway before events reach the backend.
+</Callout>
+
+## 4.4 Leader / Gateway Transformation Code
+
+```python
+# gateway/transform.py
+KNOWN_EVENT_TYPES = {
+    "assault", "perimeter_intrusion", "forced_entry",
+    "tamper_detected", "motion_detected", "person_present"
+}
+
+def derive_priority(confidence: float) -> str:
+    if confidence >= 0.80: return "critical"
+    if confidence >= 0.50: return "high"
+    return "low"
+
+def transform_mesh_payload(packet: dict) -> dict | None:
+    try:
+        event      = packet["event"]
+        node_id    = packet["node"].strip().lower()
+        event_type = event["type"]
+        confidence = float(event["confidence"])
+
+        if not node_id: raise ValueError("node is empty")
+        if event_type not in KNOWN_EVENT_TYPES: raise ValueError(f"unknown: {event_type}")
+        if not 0.0 <= confidence <= 1.0: raise ValueError("confidence out of range")
+
+        return {
+            "node_id": node_id, "event_type": event_type,
+            "confidence": confidence, "ts": packet.get("ts"),
+            "evidence_ref": packet.get("evidence_ref"),
+            "priority": derive_priority(confidence),
+            "ack_req": bool(packet.get("ack_req", False))
+        }
+        # event.zone, event.subject, seq intentionally excluded
+    except (KeyError, ValueError, TypeError):
+        return None  # caller logs and discards
+```
+
+## 4.5 X-Gateway-Signature
+
+### Canonical String and Signing Algorithm
+
+```python
+# Canonical string (gateway/signer.py)
+canonical_string = f"{gateway_id}\n{timestamp}\n{canonical_json_body}"
+# canonical_json_body = json.dumps(payload, sort_keys=True, separators=(",",":"))
+# signature = HMAC-SHA256(GATEWAY_SIGNING_SECRET, canonical_string.encode()).hexdigest()
+
+def sign_payload(payload: dict) -> tuple[dict, str]:
+    timestamp = str(int(time.time()))
+    body_str  = json.dumps(payload, sort_keys=True, separators=(",",":"))
+    canon     = f"{GATEWAY_ID}\n{timestamp}\n{body_str}"
+    sig       = hmac.new(GATEWAY_SIGNING_SECRET, canon.encode("utf-8"), hashlib.sha256).hexdigest()
+    headers   = {
+        "X-API-Key": GATEWAY_API_KEY,
+        "X-Gateway-ID": GATEWAY_ID,
+        "X-Gateway-Timestamp": timestamp,
+        "X-Gateway-Signature": sig,
+        "Content-Type": "application/json"
+    }
+    return headers, body_str  # send body_str directly — not re-serialised
+```
+
+### Backend Verification
+
+```python
+# middleware/signature.py
+async def verify_gateway_signature(request: Request):
+    gateway_id = request.headers.get("X-Gateway-ID")
+    timestamp  = request.headers.get("X-Gateway-Timestamp")
+    signature  = request.headers.get("X-Gateway-Signature")
+
+    if not all([gateway_id, timestamp, signature]):
+        raise HTTPException(403, "Missing signature headers")
+
+    if abs(time.time() - int(timestamp)) > 300:
+        raise HTTPException(403, "Request timestamp out of acceptable window")
+
+    raw_body  = await request.body()
+    payload   = json.loads(raw_body)
+    body_str  = json.dumps(payload, sort_keys=True, separators=(",",":"))
+    canon     = f"{gateway_id}\n{timestamp}\n{body_str}"
+    expected  = hmac.new(GATEWAY_SIGNING_SECRET, canon.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    if not hmac.compare_digest(expected, signature):  # constant-time comparison
+        raise HTTPException(403, "Invalid gateway signature")
+
+    request.state.verified_payload = payload
+```
+
+### Required Headers
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `X-API-Key` | Yes | Gateway API key — authenticates the caller |
+| `X-Gateway-ID` | Yes | Gateway node identifier — included in canonical string |
+| `X-Gateway-Timestamp` | Yes | Unix epoch seconds string — must be within 300 s of server time |
+| `X-Gateway-Signature` | Yes | HMAC-SHA256 hex digest over canonical string |
+| `Content-Type` | Yes | Must be `application/json` |
+
+## 4.6 Production Requirements
+
+- `X-Gateway-Signature` protects the **gateway → backend** hop only. It does not replace mesh-layer per-node authentication.
+- Gateway firmware must reject packets from revoked `node_id` / `key_version` pairs before forwarding.
+- If the gateway has no recent trusted time from the leader, it must mark forwarded packets as degraded and surface the condition in telemetry.
+- The Leader should append received JSON records to its local buffer before backhaul upload and retry failed HTTPS uploads on the next trusted connection.
+- The current radio design's AES-128 MicroSD encryption and HMAC-SHA256 mesh auth tags are a useful pilot baseline, but they do not replace the production key lifecycle in §12.2.

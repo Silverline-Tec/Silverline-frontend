@@ -1,0 +1,125 @@
+---
+title: "2. System Architecture"
+description: "Components, boundaries, technology stack, and architectural principles."
+section: "Architecture"
+order: 3
+---
+
+# 2. System Architecture
+
+Most components in this architecture exist to move a field event safely from **Leader / gateway ingest** to durable processing and operator notification. The dashboard-facing pieces consume that pipeline; they are not the system's source of truth.
+
+## 2.1 Architectural Principles
+
+| Principle | Rule | Why |
+|-----------|------|-----|
+| **Single owner per resource** | The RQ processing worker is the only process that writes to `incidents`. The API never writes incident rows. | Prevents double-writes, races, and conflicting deduplication paths. |
+| **One stable external contract** | The flat, lowercase-snake ingest schema defined in §4 is the only supported gateway contract. | Eliminates the schema drift that existed across v1–v3. |
+| **Exact request correlation** | Every successful ingest attempt produces a durable `_log_id` backed by `logs.id`. All internal payloads carry this key. | Enables exact log updates by primary key — no `ORDER BY / LIMIT` hacks. |
+| **Persistence before side effects** | Realtime, SMS, and webhook work is written as outbox rows inside the same DB transaction as the incident upsert, before any external call. | A crash after DB commit leaves pending outbox rows — work is never silently lost. |
+| **Identical operator-feed payload shapes** | Backlog and live feed payloads share the same 9 fields. The dashboard frontend renders one model. | Eliminates frontend special-casing and reduces integration surface. |
+| **Database as authority** | PostgreSQL uniqueness constraints resolve races. Redis is transport and acceleration, not truth. | Redis failure can never cause data loss or duplicate incident creation. |
+| **One ingest contract, multiple trusted callers** | Hardware gateways and edge uplink clients both authenticate with the same signed `POST /ingest` contract, but with distinct credentials and gateway IDs. | Central validation logic stays uniform even when the deployment is split across edge and control-plane tiers. |
+| **Deterministic fallback** | If the system cannot prove two anchorless events are the same, it preserves both and marks `dedup_uncertain` rather than guessing. | Operational correctness beats false deduplication. |
+| **Sync worker, async API** | FastAPI is fully async. RQ worker is fully synchronous (`psycopg2`). No shared runtime or pool. | Mixing async/sync DB drivers in one process causes subtle issues. |
+
+### Supported Deployment Profiles
+
+| Profile | Runs Where | Main Components | Purpose |
+|---------|------------|-----------------|---------|
+| **Central control-plane** | VPS / cloud host | `api`, `worker`, `dispatcher`, `recovery`, `postgres`, `redis`, `elixir`, `nginx` | Full operator-facing platform: system of record, realtime, dashboard APIs, SMS, webhooks. |
+| **Edge profile** | Inference box / field appliance | `api`, `sentinel-agent`, SQLite | Lightweight local processing with durable buffering and optional replay of accepted events to the central `POST /ingest` endpoint. |
+
+Detailed edge runtime behavior is specified separately in [10A. Edge Device Runtime](/docs/edge-device-runtime) so edge developers can work in a narrower module without pulling central-control-plane concerns into every change.
+
+## 2.2 Component Inventory
+
+| Component | Technology | Responsibility | In Scope |
+|-----------|------------|----------------|----------|
+| Edge device | ESP32-S3 | Local AI inference, event payload creation, LoRa transmission. | No |
+| LoRa mesh | 433/868 MHz LoRa | Flood-discovery relay, seen-message cache, route caching, reverse-route acknowledgements. | No |
+| Leader / Gateway | ESP32 + LoRa + Wi-Fi/GSM + MicroSD + RTC | Receives relayed packets, acknowledges reverse routes, buffers records locally, verifies mesh HMAC, flattens/signs payloads, POSTs to `/ingest`, subscribes to `alerts:gsm_fallback` when GSM is present. | Partially |
+| **Ingestion API** | Python / FastAPI | Auth, validation, ingress controls, log correlation, device upsert, enqueue to Redis or `edge_spool`. | **Yes** |
+| **Processing Worker** | Python / RQ | Central-only sole writer to `incidents`. Deduplicates, upserts, creates outbox rows transactionally. | **Yes** |
+| **Edge Agent** | Python process | Edge-only merged processor + dispatcher + recovery loop. Sole writer to local edge `incidents`. Stages optional central uplink rows. | **Yes** |
+| **Outbox Dispatcher** | Python process | Executes first-transmission side effects: realtime publish, SMS, webhooks, GSM fallback, and optional edge uplink replay. | **Yes** |
+| **Recovery Worker** | Python process | Central-only poller for `recovery_queue` that re-enqueues unprocessed payloads to Redis. | **Yes** |
+| **Real-Time Layer** | Elixir / Phoenix | Central-only subscriber to Redis `incidents:new`. Broadcasts to WebSocket clients. Serves backlog on join. | **Yes** |
+| **Dashboard API** | Python / FastAPI | 5+ REST endpoints for incidents, devices, stats, webhooks, and status transitions. | **Yes** |
+| **PostgreSQL 15** | PostgreSQL | Central system of record: incidents, alerts, logs, outbox, webhooks, devices, locations, recovery_queue. | **Yes** |
+| **SQLite 3** | Embedded DB | Edge-local incidents, logs, outbox, `recovery_queue`, `webhooks`, and `edge_spool`. | **Yes** |
+| **Redis 7** | Redis | Central queue transport (RQ), pubsub (`incidents:new`, `alerts:gsm_fallback`), rate-limit sorted sets, optional edge realtime relay. | **Yes** |
+| **Nginx + Certbot** | Nginx / Let's Encrypt | TLS termination, reverse proxy, route separation. | **Yes** |
+| **Docker Compose** | Docker | Service orchestration on single VPS. | **Yes** |
+
+## 2.3 Technology Stack
+
+| Layer | Technology | Role |
+|-------|------------|------|
+| Ingestion + Dashboard API | Python / FastAPI ≥ 0.115 | HTTP endpoints, Pydantic validation, async orchestration, SQLAlchemy-backed Postgres access |
+| Background Worker | Python / RQ ≥ 1.16 | Central synchronous incident processing and retry management |
+| Edge agent | Python 3.11+ | Merged processor, dispatcher, and recovery loop over SQLite-backed local state |
+| Worker DB driver | `psycopg2-binary` ≥ 2.9 | Synchronous PostgreSQL access in worker only |
+| Real-Time Server | Elixir / Phoenix ~> 1.7 | WebSocket push, Redis subscriber GenServer |
+| Real-Time DB access | Ecto ~> 3.10 + Postgrex | Backlog query on channel join |
+| Database | PostgreSQL 15 | Persistent system of record |
+| Edge local database | SQLite 3 | Embedded durable storage and queue spool on edge devices |
+| Queue + Pubsub | Redis 7 + SQLite spool | Central RQ job queue + pubsub, edge durable `edge_spool`, rate-limit sorted sets |
+| SMS Provider | Africa's Talking SDK | Primary SMS delivery, Kenya-native sandbox |
+| Proxy / TLS | `nginx:alpine` + `certbot/certbot` | HTTPS termination, route proxying |
+| Containerisation | Docker Compose v2 | Service orchestration |
+| DB Migrations | Alembic ≥ 1.13 | Schema versioning |
+| HTTP Client (webhooks) | `requests` ≥ 2.31 | Synchronous outbound HTTP from dispatcher |
+
+### Visual Data Flow
+
+![Sentinel architecture flow diagram](/architecture-flow.svg)
+
+## 2.4 Trust Boundaries
+
+### System Boundary Map
+
+| Boundary | Trust Assumption | Failure if Compromised |
+|----------|------------------|------------------------|
+| Hardware node ↔ LoRa mesh | Node secret, RTC, and evidence reference are local to the device | Single node can spoof or replay field events |
+| Mesh ↔ Leader / Gateway | Gateway verifies mesh auth before forwarding | One leader can suppress, forge, or delay a whole mesh |
+| Gateway ↔ Backend | Backend trusts only canonical JSON with valid gateway signature | Gateway compromise loses backend-side payload authenticity |
+| Backend ↔ Operator surfaces | Dashboard/API access is scoped and audited | Over-broad access exposes incidents, device state, and evidence metadata |
+
+| Caller | Credential | Permitted Routes | Notes |
+|--------|------------|-----------------|-------|
+| Gateway (hardware) | `X-API-Key: GATEWAY_API_KEY` + `X-Gateway-Signature` | `POST /ingest` only | API key enforced at router mount. Signature verified by FastAPI dependency before route code runs. |
+| Dashboard frontend | `X-API-Key: DASHBOARD_API_KEY` | `GET /api/*` and `PATCH /api/*` | Read-heavy internal client. Cannot access `/ingest`. |
+| Internal services | Network-only + env vars | Redis, PostgreSQL, outgoing webhooks | Docker network isolation. Never exposed publicly. |
+
+### Blast Radius
+
+| Scope | Expected Impact | Required Containment |
+|-------|-----------------|----------------------|
+| Single node | One device can emit false or replayed events | Revoke the node, preserve logs, retrieve hardware |
+| Single leader / gateway | One mesh can be muted or forged | Rotate gateway secret, stop ingest for that gateway, re-enroll mesh |
+| Control plane / fleet-wide | Alerts and ingest across the deployment become untrustworthy | Freeze fan-out, rotate fleet credentials, staged redeploy |
+
+<Callout type="warning" title="Security Model">
+  HMAC-SHA256 authentication between field nodes and the gateway is handled at the LoRa mesh layer. The gateway strips the mesh auth tag before forwarding. For the pilot, the backend trust boundary remains: **any request carrying a valid `GATEWAY_API_KEY` and a valid `X-Gateway-Signature` over the canonical JSON body is trusted.** Production deployments must additionally implement the controls in §12: per-node secrets, denylist enforcement, time-sync validation, and compromise playbooks.
+</Callout>
+
+## 2.5 Inter-Service Communication Matrix
+
+| From | To | Protocol / Method | Auth |
+|------|----|-------------------|------|
+| Gateway | Ingestion API | HTTPS POST `/ingest` | `GATEWAY_API_KEY` + `X-Gateway-Signature` |
+| Edge Agent | Central Ingestion API | HTTPS POST `/ingest` | `UPLINK_API_KEY` + `UPLINK_SIGNING_SECRET` + `UPLINK_GATEWAY_ID` |
+| Ingestion API | Redis | `RPUSH incidents` queue | Internal |
+| Ingestion API | SQLite `edge_spool` | Local DB insert | Local filesystem permissions |
+| Ingestion API | PostgreSQL | Async (`databases` library) | Connection string |
+| Ingestion API | SQLite | Embedded SQL | Local filesystem permissions |
+| Processing Worker | PostgreSQL | Sync `psycopg2` | Connection string |
+| Edge Agent | SQLite | Embedded SQL | Local filesystem permissions |
+| Outbox Dispatcher | Africa's Talking | HTTPS / AT Python SDK | `AT_API_KEY` |
+| Outbox Dispatcher | Gateway (GSM) | Redis PUBLISH `alerts:gsm_fallback` | Internal |
+| Outbox Dispatcher | Webhook URLs | HTTPS POST | `X-Webhook-Secret` per entry |
+| Outbox Dispatcher | Redis pubsub | PUBLISH `incidents:new` | Internal |
+| Elixir RedisSubscriber | Redis | SUBSCRIBE `incidents:new` | Internal |
+| Elixir Phoenix | Dashboard client | Phoenix WebSocket | Connection-level |
+| Dashboard client | Dashboard API | HTTPS GET / PATCH `/api/*` | `DASHBOARD_API_KEY` |

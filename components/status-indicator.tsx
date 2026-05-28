@@ -19,17 +19,17 @@ export function StatusIndicator({
   className,
 }: StatusIndicatorProps) {
   const statusColors = {
-    active: 'bg-green-400',
-    inactive: 'bg-gray-500',
+    active: 'bg-brand-400',
+    inactive: 'bg-zinc-500',
     warning: 'bg-yellow-400',
     critical: 'bg-red-500',
   };
 
   const statusGlows = {
-    active: 'shadow-[0_0_10px_rgba(0,255,136,0.6)]',
-    inactive: 'shadow-[0_0_10px_rgba(100,116,139,0.4)]',
-    warning: 'shadow-[0_0_10px_rgba(250,204,21,0.6)]',
-    critical: 'shadow-[0_0_10px_rgba(255,23,68,0.7)]',
+    active: '',
+    inactive: '',
+    warning: '',
+    critical: '',
   };
 
   return (
@@ -42,7 +42,7 @@ export function StatusIndicator({
           pulsing && 'animate-pulse'
         )}
       />
-      {label && <span className="text-xs font-mono text-gray-300">{label}</span>}
+      {label && <span className="text-xs font-mono text-zinc-400">{label}</span>}
     </div>
   );
 }

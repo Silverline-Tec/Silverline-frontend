@@ -74,9 +74,7 @@ export function HeroSection() {
             <ArrowRight className="w-5 h-5" />
           </Link>
           <Link
-            href="https://sentinel-software.vercel.app/docs"
-            target="_blank"
-            rel="noreferrer"
+            href="/docs"
             className="px-8 py-3 border border-cyan-400/50 text-cyan-300 font-bold rounded hover:bg-cyan-400/10 transition-colors"
           >
             Platform Docs

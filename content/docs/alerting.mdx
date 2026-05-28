@@ -1,0 +1,163 @@
+---
+title: "8. Alerting and Outbox Dispatcher"
+description: "Alert rules engine, outbox dispatcher, SMS delivery, GSM fallback, webhooks, and optional edge uplink replay."
+section: "Core Logic"
+order: 9
+---
+
+# 8. Alerting and Outbox Dispatcher
+
+## 8.1 Alert Rules Configuration
+
+```python
+# config/alert_rules.py
+ALERT_RULES = [
+    {
+        "name": "critical_intrusion",
+        "conditions": {
+            "event_types": ["assault", "forced_entry", "tamper_detected"],
+            "confidence_min": 0.85,
+            "priorities": ["high", "critical"]
+        },
+        "actions": ["sms", "webhook"],
+        "rate_limit_per_node_per_minute": 3
+    },
+    {
+        "name": "anomaly_review",
+        "conditions": {"confidence_min": 0.80, "confidence_max": 0.84},
+        "actions": ["log_with_tag:needs_triage"],
+        "rate_limit_per_node_per_minute": 10
+    },
+    {
+        "name": "routine_observation",
+        "conditions": {
+            "event_types": ["motion_detected", "person_present"],
+            "confidence_max": 0.79
+        },
+        "actions": ["log_only"],
+        "rate_limit_per_node_per_minute": 20
+    },
+]
+```
+
+## 8.2 Redis-backed Rule Throttle
+
+```python
+# alerts/rate_limit.py — durable rolling window per (node_id, rule_name)
+def is_rate_limited(redis_conn, node_id, rule_name, limit, now_ms=None) -> bool:
+    now_ms       = now_ms or int(time.time() * 1000)
+    key          = f"rl:{node_id}:{rule_name}"
+    window_start = now_ms - 60_000
+
+    redis_conn.zremrangebyscore(key, 0, window_start)
+    if redis_conn.zcard(key) >= limit:
+        redis_conn.expire(key, 120)
+        return True
+
+    redis_conn.zadd(key, {str(now_ms): now_ms})
+    redis_conn.expire(key, 120)
+    return False
+
+# Survives worker restarts. Safe for multi-worker scaling.
+```
+
+<Callout type="info" title="Operator Throttle vs Ingress Protection">
+  This limiter prevents operator spam after an incident is already accepted. It is not the same as the ingress DoS controls in §12.6.
+</Callout>
+
+## 8.3 Fleet Anomaly Detection
+
+| Signal | Threshold | Action |
+|--------|-----------|--------|
+| Sudden node chatter | Node emits more than 10 packets/hour unexpectedly | Create `needs_review` operator alert and log anomaly |
+| Baseline breach | Node exceeds 200% of its rolling hourly baseline | Trip ingest circuit breaker for that node |
+| Deployment flood | Fleet exceeds 1,000 packets/hour | Escalate to operator and shed low-priority traffic |
+
+These detections should emit operational alerts even if the downstream incident rules do not match.
+
+## 8.4 Outbox Dispatcher
+
+```python
+# dispatcher.py — separate Docker Compose service
+def drain_outbox_once():
+    # FOR UPDATE SKIP LOCKED — safe for multiple dispatcher instances
+    rows = claim_pending_outbox_rows(limit=100)
+    for row in rows:
+        if   row["channel"] == "realtime": publish_realtime(row)
+        elif row["channel"] == "sms":      deliver_sms(row)
+        elif row["channel"] == "webhook":  deliver_webhook(row)
+        elif row["channel"] == "uplink":   deliver_uplink(row)
+```
+
+### Optional Edge Uplink Replay
+
+When the edge profile is paired with a central control-plane, the dispatcher also understands an `uplink` outbox channel.
+
+Rules:
+
+- `uplink` rows are created by the edge agent, not by the central worker.
+- One `uplink` row is staged per accepted ingest request, even for duplicate retransmissions.
+- Delivery target is the central `POST /ingest` endpoint.
+- Auth uses distinct `UPLINK_API_KEY`, `UPLINK_SIGNING_SECRET`, and `UPLINK_GATEWAY_ID` values.
+- The payload shape is the original flat ingest contract, not a local incident row.
+
+## 8.5 SMS Delivery Flow
+
+| Stage | Action | Alert Row Status |
+|-------|--------|-----------------|
+| 1 | Dispatcher claims pending `sms` outbox row. | `pending` |
+| 2 | POST to Africa's Talking `/messaging`. | `pending` |
+| 3a — Success | Mark alert `sent`, mark outbox `sent`. | `sent` |
+| 3b — Failures × 3 | Wait 30 s between attempts. | `pending` |
+| 4 — Exhausted | Mark alert `failed_at_fallback`. PUBLISH `alerts:gsm_fallback`. | `failed_at_fallback` |
+| 5 — GSM fallback | Gateway subscribes to `alerts:gsm_fallback` → SIM800L sends. | `failed_at_fallback` (terminal for backend) |
+
+<Callout type="info" title="Responsibility Boundary">
+  The backend's responsibility ends at publishing to `alerts:gsm_fallback`. The gateway (hardware side) owns the SIM800L subscribe-and-send logic. The backend records the handoff: `status=failed_at_fallback`, `fallback_channel=gsm`.
+</Callout>
+
+## 8.6 SMS Message Format
+
+```python
+def build_sms_message(incident: dict) -> str:
+    return (
+        f"[SENTINEL ALERT] {incident['event_type'].upper()} detected\n"
+        f"Node: {incident['node_id']}\n"
+        f"Confidence: {int(float(incident['confidence']) * 100)}%\n"
+        f"Priority: {incident['priority'].upper()}\n"
+        f"Time: {incident['received_at_utc']}\n"
+        f"Ref: {incident.get('evidence_ref') or 'N/A'}"
+    )
+```
+
+## 8.7 Webhook Delivery
+
+```python
+def deliver_webhook(row):
+    payload = row["payload"]
+    for attempt in range(3):
+        try:
+            r = requests.post(
+                payload["url"],
+                json=payload["event"],
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Sentinel-Event": payload["event"].get("event_type", ""),
+                    "X-Webhook-Secret": payload["secret"]
+                },
+                timeout=5
+            )
+            if r.status_code < 400:
+                mark_alert_sent(payload["alert_id"])
+                mark_outbox_sent(row["id"])
+                return
+            last_error = f"HTTP {r.status_code}"
+        except requests.RequestException as exc:
+            last_error = str(exc)
+        time.sleep(30)
+
+    mark_alert_failed(payload["alert_id"], last_error)
+    mark_outbox_failed(row["id"], last_error)
+
+# One alert row per destination — independent status, retry, failure_reason.
+```

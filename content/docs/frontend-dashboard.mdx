@@ -1,0 +1,132 @@
+---
+title: "Operations Dashboard"
+description: "Dashboard layout, operator flows, live feed behavior, right sidebar, and incident actions."
+section: "Dashboard"
+order: 3
+---
+
+# Operations Dashboard
+
+## Route
+
+The operator dashboard is a single route:
+
+```txt
+/dashboard
+```
+
+Views change inside the page. They are not separate routes.
+
+## Layout
+
+| Region | Purpose |
+|--------|---------|
+| Top bar | Product navigation and system badge |
+| Left sidebar | Dynamic dashboard view selector |
+| Header | Current view title, refresh button, right-sidebar toggle |
+| Stats strip | Top-level incident and device counts |
+| Main content | Live alerts, devices, history, map, feeds, analytics, or setup |
+| Right sidebar | Toggleable incident detail or system status |
+
+## Default Overview
+
+The overview shows the highest-value operator workflow:
+
+| Panel | Behavior |
+|-------|----------|
+| Stats strip | Total open incidents, critical count, incidents last hour, active devices, stale devices |
+| Live alert feed | New incidents prepend to the top, with the last 50 loaded on connect |
+| Device status panel | Device ID, location, last seen, battery, and not-reporting state |
+| Incident history table | Paginated and filterable, with inline acknowledge/close actions |
+| Right sidebar | Opens when an alert or row is clicked |
+
+## Live Alert Feed
+
+Each live alert row shows:
+
+| Field | Display |
+|-------|---------|
+| Priority | Color-coded badge |
+| Event type | Human-readable event label |
+| Device ID | `nodeId` from the backend |
+| Location | Location label if available |
+| Certainty | `confidence` as a percentage |
+| Time | Relative time from `receivedAtUtc` |
+| Possible repeat | Visual badge when `dedupUncertain` is true |
+
+Clicking a row loads full incident detail into the right sidebar.
+
+## Device Status
+
+The device panel shows one row per field device:
+
+| Field | Display |
+|-------|---------|
+| Device ID | Backend `nodeId` |
+| Location | Location label if available |
+| Last seen | Relative time |
+| Battery | Percentage or `Unknown` |
+| Reporting state | `Online` or `Not reporting` |
+
+The frontend treats a device as not reporting if either the backend marks it stale or `lastSeenAt` is older than 10 minutes.
+
+## Incident History
+
+The table supports:
+
+| Filter | Query mapping |
+|--------|---------------|
+| Device | `node_id` |
+| Alert type | `event_type` |
+| Status | `status` |
+| Priority | `priority` |
+| From date | `from_ts` |
+| To date | `to_ts` |
+
+Pagination uses `limit` and `offset`. The current page size is 20.
+
+## Inline Actions
+
+Operators can update incident state from the table or right sidebar:
+
+| Action | Backend status |
+|--------|----------------|
+| Seen | `acknowledged` |
+| Close | `closed` |
+
+After a status update, the dashboard merges the updated incident into the live list, history table, and detail sidebar, then refreshes background stats.
+
+## Right Sidebar
+
+The right sidebar replaces the older modal behavior.
+
+When no incident is selected, it shows system status:
+
+| Status item | Meaning |
+|-------------|---------|
+| Live updates | Phoenix socket state |
+| Last update | Last successful data refresh or websocket event |
+| Main system | REST API reachability |
+| Open incidents | Current live open count |
+| Active devices | Current active device count |
+| Stale devices | Current not-reporting count |
+| Waiting to send | Backend recovery backlog count |
+| Oldest waiting data | Age of oldest recovery item |
+
+When an incident is selected, it shows:
+
+| Field | Source |
+|-------|--------|
+| Event time | `eventTimeUtc` |
+| Received time | `receivedAtUtc` |
+| Clock drift | `clockDriftMs` |
+| Evidence | `evidenceRef` |
+| Certainty | `confidence` |
+| Transmission count | `transmissionCount` |
+| Time source | `timeSource` |
+| Linked deliveries | `alerts[]` |
+
+## Non-Goals
+
+The dashboard does not perform backend inference, deduplication, authoritative alert routing, or direct operator notification delivery. Those remain backend responsibilities.
+

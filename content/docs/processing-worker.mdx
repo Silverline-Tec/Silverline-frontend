@@ -1,0 +1,126 @@
+---
+title: "7. Processing Worker"
+description: "Central RQ worker, edge agent, transactional upsert, outbox pattern, and recovery worker."
+section: "Core Logic"
+order: 8
+---
+
+# 7. Processing Worker
+
+The central control-plane uses a fully synchronous Python RQ worker. **No `async`/`await`.** All DB calls use `psycopg2` directly — separate from the FastAPI async driver. In the edge profile, the same incident-processing rules run inside the merged `sentinel-agent` loop against SQLite instead of PostgreSQL.
+
+## 7.1 Setup and Retry
+
+```python
+# worker.py
+redis_conn = Redis.from_url(os.getenv("REDIS_URL"))
+queue      = Queue("incidents", connection=redis_conn)
+
+# jobs.py — exponential backoff: 3 attempts at 1s, 5s, 30s
+def enqueue_incident(payload: dict):
+    queue.enqueue(
+        process_incident, payload,
+        retry=Retry(max=3, interval=[1, 5, 30]),
+        on_failure=on_job_failure
+    )
+
+def on_job_failure(job, connection, exc_type, exc_val, traceback):
+    payload = job.args[0] if job.args else {}
+    if payload.get("_log_id"):
+        cur.execute(
+            "UPDATE logs SET outcome=%s, failure_reason=%s WHERE id=%s",
+            ("failed", str(exc_val), payload["_log_id"])
+        )
+```
+
+## 7.2 Full Processing Function
+
+```python
+# worker/process.py — fully synchronous
+def process_incident(payload: dict):
+    request_id = payload["_log_id"]
+    dedup_key, uncertain = build_dedup_key(
+        payload["node_id"], payload["event_type"],
+        payload.get("evidence_ref"), payload.get("ts"),
+        request_id, payload.get("clock_drift_ms"),
+    )
+
+    with _db:  # DB transaction — commits on exit, rolls back on exception
+        cur = _db.cursor()
+
+        # Step 1 — Upsert incident (worker is SOLE OWNER)
+        cur.execute(UPSERT_SQL, {...})
+        incident = dict(zip([d[0] for d in cur.description], cur.fetchone()))
+
+        # Step 2 — Update log row by PK (exact correlation, no race)
+        outcome = "duplicate" if incident["transmission_count"] > 1 else "accepted"
+        cur.execute(
+            "UPDATE logs SET outcome=%s, dedup_key=%s WHERE id=%s",
+            (outcome, dedup_key, request_id)
+        )
+
+        # Step 3 — edge-only uplink row (one per accepted event, including duplicates)
+        if EDGE_UPLINK_ENABLED:
+            insert_outbox_uplink_row(cur, request_id, payload)
+
+        # Step 4 — operator-facing side effects gated on first transmission only
+        if incident["transmission_count"] == 1:
+            enqueue_realtime_outbox(cur, incident)
+            for rule in ALERT_RULES:
+                if not rule_matches(rule, incident): continue
+                if is_rate_limited(
+                    incident["node_id"], rule["name"],
+                    rule.get("rate_limit_per_node_per_minute", 999)
+                ): continue
+                for action in rule["actions"]:
+                    create_alert_and_outbox_rows(cur, incident, rule, action)
+
+        cur.close()
+    # Transaction committed — outbox rows exist; dispatcher picks them up
+```
+
+<Callout type="warning" title="Critical: Transmission Gate">
+  Operator-facing side effects — alert rows, realtime publish, webhook dispatch, SMS — are **gated on `transmission_count == 1`**. A duplicate mesh retransmission hits only the upsert and log update. **No second SMS. No second WebSocket event.** The one deliberate exception is the optional edge `uplink` outbox row: it is staged for every accepted event so the central control-plane can apply the same ingest + dedup logic independently.
+</Callout>
+
+## 7.3 Recovery Worker
+
+```python
+# recovery.py — separate Docker Compose service
+async def recover():
+    while True:
+        rows = await database.fetch_all(
+            "SELECT id, raw_payload FROM recovery_queue"
+            " WHERE processed = FALSE ORDER BY created_at ASC LIMIT 100"
+        )
+        for row in rows:
+            # Mark processed BEFORE re-enqueueing to avoid double-processing on restart
+            await database.execute(
+                "UPDATE recovery_queue SET processed = TRUE WHERE id = :id",
+                {"id": row["id"]}
+            )
+            enqueue_incident(json.loads(row["raw_payload"]))  # same function, same path
+        await asyncio.sleep(60)
+```
+
+## 7.4 Edge Agent Runtime
+
+The edge profile replaces the three central background services (`worker`, `dispatcher`, `recovery`) with one long-lived process: `sentinel-agent`.
+
+```python
+async def run_forever():
+    while True:
+        requeue_stale_edge_spool_leases()
+        process_edge_spool_batch()     # local incident upsert into SQLite
+        drain_outbox_once()            # realtime / sms / webhook / uplink
+        requeue_failed_outbox_rows()
+        recover_once()                 # replays local recovery_queue rows
+        await sleep_if_no_work()
+```
+
+Rules:
+
+- The edge API writes accepted payloads to SQLite `edge_spool`.
+- The edge agent is the sole writer to local `incidents` in edge mode.
+- The same dedup and alert rules apply in both profiles.
+- If `UPLINK_INGEST_URL` is configured, the edge agent stages a durable `uplink` outbox row for every accepted event and replays that payload upstream through the central signed `POST /ingest` contract.

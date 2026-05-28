@@ -64,10 +64,10 @@ export function LiveCameraGrid({
         animate={{ opacity: 1 }}
         className="fixed inset-0 z-50 bg-black flex items-center justify-center p-4"
       >
-        <div className="relative w-full max-w-4xl aspect-video bg-black rounded-lg border border-cyan-400/30 overflow-hidden">
+        <div className="relative w-full max-w-4xl aspect-video bg-black rounded-lg border border-brand-500/20 overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-b from-transparent via-black to-black opacity-50" />
           <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-cyan-400 text-lg font-mono">LIVE FEED - {fullscreen}</div>
+            <div className="text-brand-400 text-lg font-mono">LIVE FEED - {fullscreen}</div>
           </div>
           <button
             onClick={() => setFullscreen(null)}
@@ -83,8 +83,8 @@ export function LiveCameraGrid({
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-2xl font-bold text-cyan-300 mb-2">{heading}</h2>
-        <p className="text-gray-400 text-sm">
+        <h2 className="font-display text-lg font-bold text-white mb-2">{heading}</h2>
+        <p className="text-zinc-500 text-sm">
           {loading && cameraFeeds.length === 0
             ? loadingDescription
             : readyDescription}
@@ -107,7 +107,7 @@ export function LiveCameraGrid({
                 <div className="absolute inset-0 flex items-center justify-center text-gray-500">
                   <div className="text-center">
                     <div className="text-sm font-mono mb-2">CAMERA NOT CONNECTED YET</div>
-                    <div className="w-16 h-16 border-2 border-cyan-400/30 rounded mx-auto" />
+                    <div className="w-16 h-16 border-2 border-brand-500/20 rounded mx-auto" />
                   </div>
                 </div>
 
@@ -115,19 +115,19 @@ export function LiveCameraGrid({
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-between p-2 gap-2">
                   <button
                     onClick={() => toggleMute(camera.id)}
-                    className="p-2 bg-cyan-400/20 hover:bg-cyan-400/40 rounded transition-colors"
+                    className="p-2 bg-brand-500/10 hover:bg-brand-500/20 rounded transition-colors"
                   >
                     {muted.has(camera.id) ? (
-                      <VolumeX className="w-4 h-4 text-cyan-400" />
+                      <VolumeX className="w-4 h-4 text-brand-400" />
                     ) : (
-                      <Volume2 className="w-4 h-4 text-cyan-400" />
+                      <Volume2 className="w-4 h-4 text-brand-400" />
                     )}
                   </button>
                   <button
                     onClick={() => setFullscreen(camera.id)}
-                    className="p-2 bg-cyan-400/20 hover:bg-cyan-400/40 rounded transition-colors"
+                    className="p-2 bg-brand-500/10 hover:bg-brand-500/20 rounded transition-colors"
                   >
-                    <Maximize2 className="w-4 h-4 text-cyan-400" />
+                    <Maximize2 className="w-4 h-4 text-brand-400" />
                   </button>
                 </div>
 
@@ -143,12 +143,12 @@ export function LiveCameraGrid({
               {/* Camera info */}
               <div className="space-y-2">
                 <div>
-                  <div className="text-sm font-bold text-cyan-300">{camera.label}</div>
-                  <div className="text-xs text-gray-400">{camera.unit}</div>
+                  <div className="text-sm font-bold text-zinc-100">{camera.label}</div>
+                  <div className="text-xs text-zinc-500">{camera.unit}</div>
                 </div>
 
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-400">{camera.location}</span>
+                  <span className="text-zinc-500">{camera.location}</span>
                   <span className={cn(
                     'font-mono',
                     camera.batteryLevel > 50 ? 'text-green-400' : camera.batteryLevel > 20 ? 'text-yellow-400' : 'text-red-400'
@@ -179,7 +179,7 @@ export function LiveCameraGrid({
         )) : (
           <div className="md:col-span-2 lg:col-span-3">
             <TacticalCard glow="cyan">
-              <p className="text-sm text-gray-400">
+              <p className="text-sm text-zinc-500">
                 {emptyMessage}
               </p>
             </TacticalCard>

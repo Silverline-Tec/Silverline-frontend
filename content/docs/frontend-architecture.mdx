@@ -1,0 +1,110 @@
+---
+title: "Frontend Architecture"
+description: "Next.js app structure, API proxy boundaries, shared contracts, and module layout."
+section: "Frontend"
+order: 2
+---
+
+# Frontend Architecture
+
+## Application Stack
+
+| Layer | Choice |
+|-------|--------|
+| Framework | Next.js App Router |
+| Package manager | `pnpm` |
+| Styling | Tailwind CSS with Sentinel docs-inspired tokens |
+| Animation | `framer-motion` where useful, kept restrained |
+| Icons | `lucide-react` |
+| Realtime client | Phoenix JavaScript client |
+| Data source | Sentinel central API through local Next.js proxy routes |
+
+## Repository Boundary
+
+The frontend lives in `silverline-frontend`. It is intentionally separate from `sentinel-backend`.
+
+```txt
+silverline-frontend/
+  app/
+    dashboard/
+      page.tsx
+    api/control/
+      ...
+  components/
+    dashboard/
+      ...
+  lib/
+    control-api.ts
+    control-client.ts
+    control-types.ts
+```
+
+## Data Boundary
+
+The frontend has two paths into Sentinel:
+
+| Path | Used for | Notes |
+|------|----------|-------|
+| Next.js API proxy | Stats, incidents, devices, system status, status changes | Keeps `SENTINEL_DASHBOARD_API_KEY` server-side |
+| Phoenix WebSocket | Live incident backlog and new incident events | Uses `NEXT_PUBLIC_SENTINEL_REALTIME_URL` because the browser must open the socket |
+
+## API Proxy Modules
+
+The browser calls `/api/control/*`. Those route handlers call the backend API using `lib/control-api.ts`.
+
+| Route | Purpose |
+|-------|---------|
+| `/api/control/stats` | Dashboard stats strip |
+| `/api/control/incidents` | Incident list with filters, limit, and offset |
+| `/api/control/incidents/[incidentId]` | Full incident detail |
+| `/api/control/incidents/[incidentId]/status` | Acknowledge or close an incident |
+| `/api/control/devices` | Field device status list |
+| `/api/control/system` | Health and metrics summary |
+| `/api/control/webhooks` | Webhook administration support |
+
+## Shared Types
+
+`lib/control-types.ts` defines browser-facing camelCase types:
+
+```ts
+IncidentSummary
+IncidentDetail
+DeviceSummary
+DashboardStats
+SystemSnapshot
+```
+
+`lib/control-api.ts` owns backend snake_case normalization. UI components should consume the normalized camelCase types only.
+
+## Dashboard Module Layout
+
+The dashboard page is intentionally thin. It owns state orchestration, data loading, and socket lifecycle. Presentation lives under `components/dashboard/`.
+
+| File | Responsibility |
+|------|----------------|
+| `app/dashboard/page.tsx` | State, polling, websocket setup, handler wiring |
+| `components/dashboard/dashboard-header.tsx` | Page title, refresh button, details toggle |
+| `components/dashboard/stats-strip.tsx` | Top stats strip |
+| `components/dashboard/live-alert-feed.tsx` | Live alert stream |
+| `components/dashboard/device-status-panel.tsx` | Field device table-like panel |
+| `components/dashboard/incident-history-table.tsx` | Filterable, paginated incident history |
+| `components/dashboard/right-sidebar.tsx` | Toggleable detail/status sidebar |
+| `components/dashboard/dashboard-analytics.tsx` | System health view |
+| `components/dashboard/dashboard-settings.tsx` | Runtime connection view |
+| `components/dashboard/utils.ts` | Formatting, filtering, stats builders, realtime normalization |
+| `components/dashboard/types.ts` | Dashboard-specific shared types |
+
+## Design System Alignment
+
+The frontend dashboard uses the same visual language as this docs site:
+
+| Token style | Usage |
+|-------------|-------|
+| Near-black surfaces | Main background and panels |
+| `brand-400` / `brand-500` green | Positive state, focus, selected nav |
+| Zinc text | Secondary labels and descriptions |
+| Thin white borders | Section separation |
+| Space Mono display headings | Product and system labels |
+
+Avoid reintroducing heavy neon glow or highly nested card stacks unless there is a clear product reason.
+

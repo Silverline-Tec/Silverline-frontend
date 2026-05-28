@@ -20,7 +20,7 @@ export default function Home() {
               <h3 className="text-cyan-300 font-bold mb-4">Product</h3>
               <ul className="space-y-2 text-gray-400 text-sm">
                 <li><a href="/dashboard" className="hover:text-cyan-300 transition">Dashboard</a></li>
-                <li><a href="https://sentinel-software.vercel.app/docs" className="hover:text-cyan-300 transition">Docs</a></li>
+                <li><a href="/docs" className="hover:text-cyan-300 transition">Docs</a></li>
                 <li><a href="#" className="hover:text-cyan-300 transition">Security</a></li>
               </ul>
             </div>
@@ -35,7 +35,7 @@ export default function Home() {
             <div>
               <h3 className="text-cyan-300 font-bold mb-4">Resources</h3>
               <ul className="space-y-2 text-gray-400 text-sm">
-                <li><a href="https://sentinel-software.vercel.app/docs" className="hover:text-cyan-300 transition">Docs</a></li>
+                <li><a href="/docs" className="hover:text-cyan-300 transition">Docs</a></li>
                 <li><a href="#" className="hover:text-cyan-300 transition">Support</a></li>
                 <li><a href="#" className="hover:text-cyan-300 transition">Contact</a></li>
               </ul>

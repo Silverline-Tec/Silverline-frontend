@@ -1,0 +1,106 @@
+---
+title: "14. Testing & Demo Operations"
+description: "Demo injection script, daily verification checklist, and known constraints with scale paths."
+section: "Operations"
+order: 16
+---
+
+# 14. Testing, Demo Operations, and Known Constraints
+
+## 14.1 Demo Injection Script
+
+```python
+# scripts/inject_demo_event.py
+import httpx, os, time, json, hmac, hashlib
+from dotenv import load_dotenv
+
+load_dotenv()
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+GATEWAY_KEY = os.getenv("GATEWAY_API_KEY")
+SIGN_SECRET = os.getenv("GATEWAY_SIGNING_SECRET", "").encode()
+GATEWAY_ID  = os.getenv("GATEWAY_ID", "gateway-01")
+
+def sign(payload: dict) -> tuple[dict, str]:
+    ts       = str(int(time.time()))
+    body_str = json.dumps(payload, sort_keys=True, separators=(",",":"))
+    canon    = f"{GATEWAY_ID}\n{ts}\n{body_str}"
+    sig      = hmac.new(SIGN_SECRET, canon.encode(), hashlib.sha256).hexdigest()
+    return {
+        "X-API-Key": GATEWAY_KEY, "X-Gateway-ID": GATEWAY_ID,
+        "X-Gateway-Timestamp": ts, "X-Gateway-Signature": sig,
+        "Content-Type": "application/json"
+    }, body_str
+
+def inject(event_type="assault", confidence=0.95, priority="high"):
+    payload = {
+        "node_id": "cam-node-demo", "event_type": event_type,
+        "confidence": confidence, "ts": int(time.time()),
+        "evidence_ref": f"demo_{int(time.time())}",
+        "priority": priority, "ack_req": False
+    }
+    headers, body_str = sign(payload)
+    r = httpx.post(f"{BACKEND_URL}/ingest", content=body_str, headers=headers)
+    print(f"Status: {r.status_code}  |  {r.json()}")
+
+if __name__ == "__main__":
+    inject()
+```
+
+## 14.2 Daily Verification Checklist
+
+Read this checklist in layers: first prove the core ingest/worker/recovery pipeline, then verify the operator-facing surfaces such as the dashboard API, WebSocket feed, and SMS delivery. For production go-live, pair this with the validation checklist in §12.12.
+
+| Action | Expected Result |
+|--------|----------------|
+| `docker compose ps` | All 8 services show `Up (healthy)`. |
+| `docker compose --env-file .env.edge -f docker-compose.edge.yml ps` | Edge `api` and `agent` show `Up`; SQLite file is mounted persistently. |
+| `POST /ingest` — valid payload + correct signature | `200` with `request_id`; `logs` row `outcome=received`; incident in DB after worker processes. |
+| `POST /ingest` — missing `node_id` | `422`; `logs` row `outcome=invalid`. |
+| `POST /ingest` — wrong API key | `403`; `logs` row `outcome=auth_failed`. |
+| `POST /ingest` — invalid signature | `403`; `logs` row `outcome=auth_failed`. |
+| `POST /ingest` — revoked node | `403`; `logs` row `outcome=revoked`. |
+| `POST /ingest` — timestamp older than 24 h | `422`; `logs` row `outcome=invalid`. |
+| `POST /ingest` — timestamp > 1 h in future | `422`; `logs` row `outcome=invalid`. |
+| Cold-start mesh route discovery | Packet reaches the Leader via re-broadcast; reverse-route ACK returns; later packets use cached route without full flood. |
+| Force ACK timeout on a cached path | Node clears cached route and re-enters flood-discovery automatically. |
+| Burst 46 events from one node within 1 hour | First 45 accepted; remainder `429`; `logs` row `outcome=rate_limited`. |
+| POST duplicate (same `evidence_ref`) | `200`; `transmission_count` increments; no new outbox rows; no second alert. |
+| `GET /api/incidents` | Returns list with `location_label` and `dedup_uncertain` fields. |
+| `GET /api/stats` | All 7 counts correct; `stale_devices` and `nodes_exceeding_baseline` reflect current state. |
+| WebSocket connect `/socket/incidents:live` | Backlog of last 50 received immediately on connect with 9-field shape. |
+| `python scripts/inject_demo_event.py` | Dashboard updates live within 2 seconds. |
+| `PATCH /api/incidents/:id/status → acknowledged` | `200`; status updated. |
+| `PATCH /api/incidents/:id/status → open → closed` | `409 Conflict`. |
+| Kill Redis, `POST /ingest` | `200`; `recovery_queue` row written; no 500. |
+| Restart Redis, wait 60 s | Recovery worker reprocesses row; incident in DB. |
+| Disconnect edge backhaul while `UPLINK_INGEST_URL` is configured | Edge continues accepting requests locally; `uplink` outbox backlog grows; no local 5xx returned. |
+| Restore edge backhaul | Pending `uplink` rows replay to central `POST /ingest`; central incident appears after replay. |
+| `assault` event with `confidence ≥ 0.85` | `alerts` row `channel=sms`, `status=sent`; AT sandbox confirms. |
+| Trigger webhook rule | One `alerts` row per destination; each updates independently. |
+| Simulate AT failure | `failed_at_fallback` status; `alerts:gsm_fallback` published. |
+| Disconnect backhaul while traffic continues | Leader appends records to MicroSD with RTC timestamps; reconnect flushes successful batches and retries failures later. |
+| Inspect Leader buffer off-device | Buffered records are encrypted at rest if pilot storage encryption is enabled. |
+| Rotate a node secret with overlap window | Old + new `key_version` both accepted during rollout; old version rejected after cutover. |
+| Rotate a node secret while live traffic is flowing | No downtime; accepted traffic continues through the overlap window and cutover is observable in logs. |
+| Simulate Leader failure mid-relay | Mesh re-routes or buffers according to design; operators see the outage and recovery path clearly. |
+| Run retention job | Expired telemetry and incidents are deleted; purge audit log written. |
+| Replay 4,500 packets/hour simulator | Queue depth stays within published operating limit; no unbounded memory growth. |
+
+## 14.3 Chaos Drills
+
+- Run key rotation while synthetic traffic is active, then verify overlap-window success and old-key rejection after cutover.
+- Simulate Leader failure during active relay traffic and verify either route recovery or safe buffering plus operator alerting.
+- Force gateway backhaul loss and recovery while auditing for duplicate uploads, missing traces, and delayed alerts.
+- Force edge uplink loss and recovery while auditing that local incidents remain queryable and central replay eventually succeeds without inventing duplicate notifications.
+
+## 14.4 Known Constraints and Scale Path
+
+| Constraint | Current Position | Scale Path |
+|------------|-----------------|------------|
+| Single VPS — no redundancy | Hetzner 99.9% SLA + Docker restart policies. Acceptable for competition. | Managed PostgreSQL + Redis; multiple stateless app/worker nodes. |
+| WebSocket crash window | Events during Phoenix subscriber crash not replayed live. Backlog query recovers on reconnect. | Replace Redis pubsub with Redis Streams for guaranteed live delivery. |
+| Pilot-mode trusted gateway boundary | Route key + backend-verified payload signature. Gateway compromise loses payload authenticity. | Per-node secrets, denylist enforcement, and stronger gateway attestation per §12. |
+| Anchorless events | Preserved with `dedup_uncertain=TRUE` and `request_id` anchor. Requires operator review. | Improve device firmware to always emit `evidence_ref`. |
+| `EventType` enum coupling | New firmware event types require backend redeploy. Unknown types hard-rejected (422). | Maintain shared contract document. Coordinate deployments before shipping firmware. |
+| 60-second recovery delay | Events in `recovery_queue` are processed up to 60 seconds later. | Reduce polling interval or switch to trigger-based wakeup. |
+| Edge uplink backlog | If the central stack is unreachable, accepted edge events accumulate in local `uplink` outbox rows until connectivity returns. | Alert on local outbox age and available disk; add central health awareness to edge operations. |

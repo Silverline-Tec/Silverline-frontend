@@ -1,0 +1,66 @@
+---
+title: "6. Deduplication"
+description: "Anchor hierarchy, key builder, upsert logic, and timestamp strategy."
+section: "Core Logic"
+order: 7
+---
+
+# 6. Deduplication
+
+## 6.1 Why `seq` Is Excluded
+
+`seq` is a LoRa transport-layer counter used for mesh packet ordering and replay protection. It **resets on every node reboot, firmware update, and power cycle**. Using `seq` as a business dedup key produces false negatives — the same physical incident after a reboot generates a new `seq` and would create a duplicate row. `seq` is stripped at the gateway.
+
+## 6.2 Dedup Key Anchor Hierarchy
+
+| Priority | Formula | When Used | `dedup_uncertain` |
+|----------|---------|-----------|-------------------|
+| **1 — Best** | `SHA256(node_id:event_type:evidence_ref)` | `evidence_ref` present | `FALSE` |
+| **2 — Fallback** | `SHA256(node_id:event_type:floor(ts/300))` | No `evidence_ref`, `ts` present | `FALSE` (TRUE if drift > 5 min) |
+| **3 — Last resort** | `SHA256(node_id:event_type:request:<request_id>)` | No `evidence_ref` and no `ts` | `TRUE` |
+
+<Callout type="info" title="Rationale">
+  The **5-minute time bucket** absorbs clock drift and reboot-split retransmissions. Using `request_id` as the last-resort anchor (instead of current server time) ensures stability across worker retries and `recovery_queue` replay — both of which produce the same `_log_id`.
+</Callout>
+
+## 6.3 Dedup Key Builder
+
+```python
+# dedup/keys.py
+def build_dedup_key(node_id, event_type, evidence_ref, ts, request_id, clock_drift_ms):
+    if evidence_ref:
+        return sha256(f"{node_id}:{event_type}:{evidence_ref}"), False
+
+    if ts is not None:
+        uncertain = abs(clock_drift_ms or 0) > 300_000
+        return sha256(f"{node_id}:{event_type}:{ts // 300}"), uncertain
+
+    return sha256(f"{node_id}:{event_type}:request:{request_id}"), True
+```
+
+## 6.4 Upsert SQL
+
+```sql
+INSERT INTO incidents (
+    dedup_key, node_id, event_type, confidence,
+    event_time_utc, received_at_utc, clock_drift_ms, time_source,
+    evidence_ref, priority, transmission_count, dedup_uncertain
+) VALUES (...)
+ON CONFLICT (dedup_key) DO UPDATE SET
+    received_at_utc    = LEAST(incidents.received_at_utc,   EXCLUDED.received_at_utc),
+    event_time_utc     = COALESCE(incidents.event_time_utc, EXCLUDED.event_time_utc),
+    confidence         = GREATEST(incidents.confidence,     EXCLUDED.confidence),
+    transmission_count = incidents.transmission_count + 1
+    -- NEVER overwrite: node_id, event_type, evidence_ref, dedup_key
+RETURNING id, transmission_count, status;
+```
+
+## 6.5 Timestamp Fields
+
+| Field | Source | Authoritative | Purpose |
+|-------|--------|---------------|---------|
+| `event_time_utc` | Converted from device `ts` | No — may drift | Incident timeline reconstruction; forensic record. |
+| `received_at_utc` | Backend server clock | **Yes — always** | SLA auditing; authoritative ordering. |
+| `clock_drift_ms` | `received_at_utc − event_time_utc` | Diagnostic | Clock health monitoring; dedup uncertainty trigger. |
+| `time_source` | Derived from `ts` presence | Informational | `node_rtc` if `ts` present; `unknown` if absent. |
+| `dedup_uncertain` | Derived from anchor quality | Decision aid | Flags incidents for human review. Not auto-discarded. |

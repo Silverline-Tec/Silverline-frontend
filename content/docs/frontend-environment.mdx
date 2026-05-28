@@ -1,0 +1,71 @@
+---
+title: "Frontend Environment"
+description: "Required frontend env vars, how to acquire them, and how each one is used."
+section: "Operations"
+order: 5
+---
+
+# Frontend Environment
+
+## Required Variables
+
+| Variable | Required | Where it is used | How to acquire it |
+|----------|----------|------------------|-------------------|
+| `SENTINEL_BACKEND_URL` | Yes | Server-side Next.js API proxy | Local: `http://127.0.0.1:8000`. Production: central backend HTTPS URL |
+| `SENTINEL_DASHBOARD_API_KEY` | Yes | Server-side calls from `/api/control/*` to Sentinel central | Copy `DASHBOARD_API_KEY` from the central backend secret store or backend `.env` for local development |
+| `NEXT_PUBLIC_SENTINEL_REALTIME_URL` | Yes for live updates | Browser Phoenix WebSocket client | Local: `ws://127.0.0.1:4000/socket`. Production: public realtime WebSocket URL |
+
+## Local `.env.local`
+
+Use this shape locally:
+
+```bash
+SENTINEL_BACKEND_URL=http://127.0.0.1:8000
+SENTINEL_DASHBOARD_API_KEY=<copy from sentinel-backend/.env>
+NEXT_PUBLIC_SENTINEL_REALTIME_URL=ws://127.0.0.1:4000/socket
+```
+
+Do not commit real secret values.
+
+## Public vs Private Variables
+
+| Prefix | Browser-visible? | Use for |
+|--------|------------------|---------|
+| No `NEXT_PUBLIC_` prefix | No | backend URLs used by server routes, dashboard API keys, secrets |
+| `NEXT_PUBLIC_*` | Yes | values the browser must know, such as WebSocket endpoint URLs |
+
+`SENTINEL_DASHBOARD_API_KEY` must stay private. The browser should only call local Next.js API routes.
+
+## Runtime Flow
+
+```txt
+Browser
+  -> /api/control/incidents
+  -> Next.js route reads SENTINEL_DASHBOARD_API_KEY
+  -> Sentinel central /api/incidents
+```
+
+```txt
+Browser
+  -> NEXT_PUBLIC_SENTINEL_REALTIME_URL
+  -> Phoenix socket /socket
+```
+
+## Production Acquisition
+
+| Environment | Recommended source |
+|-------------|--------------------|
+| Local development | `silverline-frontend/.env.local` |
+| Preview deployment | Vercel project env vars or equivalent platform secrets |
+| Production | Managed secret store / deployment platform env vars |
+
+## Validation Checklist
+
+Before opening the dashboard:
+
+1. Central backend is reachable at `SENTINEL_BACKEND_URL`.
+2. `SENTINEL_DASHBOARD_API_KEY` matches the backend's configured dashboard key.
+3. Realtime service is reachable at `NEXT_PUBLIC_SENTINEL_REALTIME_URL`.
+4. Browser console does not show failed `/api/control/*` requests.
+5. Dashboard header shows live updates connected or gracefully reports realtime offline.
+

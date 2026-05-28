@@ -1,0 +1,83 @@
+---
+title: "Sentinel AI — Overview"
+description: "Software Technical Specification v1.4 Review. Pilot-ready design with central and edge deployment guidance."
+section: "Introduction"
+order: 1
+---
+
+# Sentinel AI Platform
+
+<Callout type="info">
+  This document is the **single source of truth** for the Sentinel AI software platform. Version 1.4 Review — May 2026 — Silverline Tech. **CONFIDENTIAL — Internal Use Only.**
+</Callout>
+
+| Field | Value |
+|-------|-------|
+| **Document Status** | Engineering Review |
+| **Version** | 1.4 — Central + Edge Topology and Uplink Addendum |
+| **Date** | May 2026 |
+| **Classification** | CONFIDENTIAL — Internal Use Only |
+| **Audience** | Backend engineers · DevOps · Frontend engineers · Product leadership |
+| **In Scope** | Ingestion · Processing · Alerting · Real-time · Dashboard API · Gateway Contract · Central deployment · Edge deployment · Threat Model · Key Management · Retention · Incident Response |
+| **Out of Scope** | Camera firmware · On-device AI inference · LoRa mesh routing · Physical gateway hardware |
+
+## Purpose
+
+This document defines **why the system exists**, **what it is**, and **how every layer works** — with sufficient precision for a competent engineer to build, maintain, and extend it without additional clarification.
+
+At its core, Sentinel AI is an **offline-capable incident-ingestion, processing, and alerting backend**. It can run either as a full central control-plane or as a lighter edge profile that keeps local SQLite state and replays accepted events upstream when connectivity returns. The live dashboard, WebSocket feed, and dashboard API are operator-facing surfaces layered on top of the central pipeline.
+
+## Quick Navigation
+
+Use the **Backend / Frontend** switch in the left sidebar to move between backend platform docs and frontend operator-dashboard docs.
+
+<Steps>
+  <Step title="Why the System Exists">
+    Understand the problem statement, goals, constraints, and design trade-offs. [→ Section 1](/docs/why-it-exists)
+  </Step>
+  <Step title="System Architecture">
+    Components, boundaries, technology stack, full-stack vs edge topology, and principles. [→ Section 2](/docs/architecture)
+  </Step>
+  <Step title="Database Schema">
+    PostgreSQL control-plane schema plus edge SQLite additions. [→ Section 3](/docs/database-schema)
+  </Step>
+  <Step title="Gateway Contract">
+    Mesh packet transformation, payload signing, backend verification. [→ Section 4](/docs/gateway-contract)
+  </Step>
+  <Step title="Ingestion API">
+    POST /ingest — validation, correlation, enqueue. [→ Section 5](/docs/ingestion-api)
+  </Step>
+  <Step title="Deduplication">
+    Anchor hierarchy, key builder, upsert rules. [→ Section 6](/docs/deduplication)
+  </Step>
+  <Step title="Processing Worker">
+    Central RQ worker, edge agent, transactional upsert, outbox, recovery worker. [→ Section 7](/docs/processing-worker)
+  </Step>
+  <Step title="Alerting & Outbox">
+    Rules engine, rate limiting, SMS, GSM fallback, webhooks. [→ Section 8](/docs/alerting)
+  </Step>
+  <Step title="Real-Time Layer">
+    Elixir/Phoenix, Redis subscriber, WebSocket, backlog. [→ Section 9](/docs/realtime)
+  </Step>
+  <Step title="Dashboard API">
+    Endpoints, filters, status transitions, device health, stats. [→ Section 10](/docs/dashboard-api)
+  </Step>
+  <Step title="Edge Device Runtime">
+    SQLite-backed edge profile, merged `sentinel-agent`, local durability, and edge-to-central replay. [→ Section 10A](/docs/edge-device-runtime)
+  </Step>
+  <Step title="Deployment">
+    Full control-plane Compose, edge Compose, TLS bootstrap, and environment variables. [→ Section 11](/docs/deployment)
+  </Step>
+  <Step title="Environment Reference">
+    Canonical env-variable list, acquisition paths, and use cases for central, edge, and realtime services. [→ Section 11A](/docs/environment-reference)
+  </Step>
+  <Step title="Production Hardening">
+    Threat model, key rotation, timestamp trust, retention, observability, incident response. [→ Section 12](/docs/production-hardening)
+  </Step>
+  <Step title="Reference">
+    Redis channels, HTTP codes, ownership matrix, rollout plan. [→ Section 13](/docs/reference)
+  </Step>
+  <Step title="Frontend Documentation">
+    Silverline frontend architecture, dashboard modules, realtime integration, environment variables, and development workflow. [→ Frontend Overview](/docs/frontend)
+  </Step>
+</Steps>

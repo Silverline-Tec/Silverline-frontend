@@ -1,0 +1,205 @@
+---
+title: "3. Database Schema"
+description: "PostgreSQL control-plane schema plus edge SQLite additions, indexes, and ownership matrix."
+section: "Data Layer"
+order: 4
+---
+
+# 3. Database Schema
+
+PostgreSQL 15 is the **canonical control-plane schema**. All timestamps are stored as `TIMESTAMPTZ` in UTC and migrations are managed via Alembic. The `incidents` table always has exactly one writer **per deployment profile**: the central RQ worker in the full stack, or the edge agent in the SQLite edge profile. The API never writes incident rows in either mode.
+
+The edge profile mirrors the necessary operational tables in SQLite and adds one edge-only queue table, `edge_spool`, to hold accepted-but-not-yet-processed events durably on disk.
+
+## 3.1 Table Ownership Matrix
+
+| Table | Writer | Reader(s) | Notes |
+|-------|--------|-----------|-------|
+| `devices` | API handler | Worker (read), Dashboard API | Auto-upserted on every valid ingest. API is sole writer. |
+| `incidents` | RQ Processing Worker (central) / Edge Agent (edge) | Dashboard API, Elixir (backlog), local edge APIs | Exactly one runtime owns incident writes in each profile. |
+| `alerts` | Worker / Edge Agent | Dashboard API | One row per delivery target. Created before delivery attempt. |
+| `outbox` | Worker / Edge Agent (within transaction) | Outbox Dispatcher / Edge Agent dispatcher loop | Durable side-effect queue. `UNIQUE dedupe_key`. |
+| `logs` | API handler + exception handlers; worker updates outcome | Dashboard API (debug) | Every ingest attempt, including 422, 403, and 429, produces a row. |
+| `recovery_queue` | API handler (enqueue failure) | Recovery Worker / Edge Agent recovery loop | Raw canonical payload stored verbatim including `_log_id`. |
+| `webhooks` | Admin/API endpoints | Outbox Dispatcher / Edge Agent dispatcher loop | DB-backed registry of delivery destinations. |
+| `locations` | Manual/admin at deployment | Worker (location cache), Dashboard API, Elixir, Edge Agent | Static. No runtime writer. |
+| `edge_spool` | API handler in edge profile | Edge Agent | SQLite-only durable queue of accepted canonical payloads awaiting local processing. |
+
+## 3.2 devices
+
+```sql
+CREATE TABLE devices (
+    id               SERIAL       PRIMARY KEY,
+    node_id          VARCHAR(50)  UNIQUE NOT NULL,  -- e.g. 'cam-node-07' (lowercase)
+    name             VARCHAR(100),                  -- human label e.g. 'North Gate Camera'
+    status           VARCHAR(20)  DEFAULT 'active', -- active | inactive | tampered | revoked
+    last_seen_at     TIMESTAMPTZ,                   -- updated on every valid ingest
+    battery_level    SMALLINT,                      -- 0-100, null if not reported
+    firmware_version VARCHAR(20),
+    created_at       TIMESTAMPTZ  DEFAULT NOW()
+);
+
+-- last_seen_at is updated ONLY on valid ingest (200 path).
+-- A node sending malformed events (422) appears stale — the correct operator signal.
+```
+
+## 3.3 incidents
+
+```sql
+CREATE TABLE incidents (
+    id                  SERIAL       PRIMARY KEY,
+    dedup_key           VARCHAR(64)  UNIQUE NOT NULL,  -- SHA-256 hex digest
+    node_id             VARCHAR(50)  REFERENCES devices(node_id),
+    event_type          VARCHAR(50)  NOT NULL,         -- always lowercase_snake
+    confidence          NUMERIC(4,3) NOT NULL,         -- 0.000 - 1.000
+    event_time_utc      TIMESTAMPTZ,                   -- device RTC (nullable)
+    received_at_utc     TIMESTAMPTZ  NOT NULL,         -- server time — authoritative
+    clock_drift_ms      INTEGER,                       -- (received_at - event_time) ms
+    time_source         VARCHAR(20)  NOT NULL,         -- ftsp | leader_rebroadcast | local_rtc | unknown
+    evidence_ref        VARCHAR(100),                  -- device-generated clip/frame ID
+    priority            VARCHAR(20)  DEFAULT 'low',    -- low | high | critical
+    status              VARCHAR(20)  DEFAULT 'open',   -- open | acknowledged | closed
+    transmission_count  SMALLINT     DEFAULT 1,        -- mesh reliability metric
+    dedup_uncertain     BOOLEAN      DEFAULT FALSE,    -- TRUE when anchor is weak
+    created_at          TIMESTAMPTZ  DEFAULT NOW()
+);
+```
+
+### Upsert Merge Rules (ON CONFLICT)
+
+| Field | Merge Rule | Reason |
+|-------|------------|--------|
+| `received_at_utc` | `LEAST(existing, new)` | Preserve earliest: first time the system became aware of the incident. |
+| `event_time_utc` | `COALESCE(existing, new)` | Preserve first non-null: first RTC reading is most likely accurate. |
+| `confidence` | `GREATEST(existing, new)` | Later retransmission may carry a higher-quality inference result. |
+| `transmission_count` | `INCREMENT` | Mesh reliability diagnostic. High counts signal unstable field nodes. |
+| `node_id`, `event_type`, `evidence_ref`, `dedup_key` | **NEVER overwritten** | Immutable identity fields. |
+| `status` | **NEVER overwritten on upsert** | Modified only by `PATCH /api/incidents/:id/status`. |
+
+## 3.4 alerts
+
+```sql
+CREATE TABLE alerts (
+    id                SERIAL       PRIMARY KEY,
+    incident_id       INTEGER      REFERENCES incidents(id),
+    rule_name         VARCHAR(100) NOT NULL,
+    channel           VARCHAR(20)  NOT NULL,   -- sms | webhook | gsm_handoff
+    recipient         TEXT,                    -- phone number or webhook URL
+    status            VARCHAR(30)  DEFAULT 'pending',
+                                               -- pending | sent | failed | failed_at_fallback
+    fallback_channel  VARCHAR(20),             -- 'gsm' when handed off
+    triggered_at      TIMESTAMPTZ  DEFAULT NOW(),
+    delivered_at      TIMESTAMPTZ,
+    failure_reason    TEXT
+);
+
+-- One row per delivery target per action.
+-- Two webhook destinations → two alert rows, each independently auditable.
+-- A pending row that never transitions to sent indicates a crash mid-delivery.
+```
+
+## 3.5 outbox
+
+```sql
+CREATE TABLE outbox (
+    id              SERIAL       PRIMARY KEY,
+    aggregate_type  VARCHAR(30)  NOT NULL,          -- incident | alert | log
+    aggregate_id    INTEGER      NOT NULL,
+    channel         VARCHAR(30)  NOT NULL,          -- realtime | sms | webhook | uplink
+    dedupe_key      VARCHAR(100) UNIQUE NOT NULL,   -- prevents duplicate side effects on retry
+    payload         JSONB        NOT NULL,
+    status          VARCHAR(20)  DEFAULT 'pending', -- pending | processing | sent | failed
+    retry_count     INTEGER      DEFAULT 0,
+    last_error      TEXT,
+    available_at    TIMESTAMPTZ  DEFAULT NOW(),
+    sent_at         TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ  DEFAULT NOW()
+);
+
+-- Written inside the same DB transaction as the incident upsert.
+-- UNIQUE dedupe_key prevents duplicate entries if the worker job retries
+-- after a DB commit but before job completion.
+```
+
+## 3.6 logs, recovery_queue, webhooks
+
+```sql
+CREATE TABLE logs (
+    id              SERIAL       PRIMARY KEY,
+    node_id         VARCHAR(50),
+    raw_payload     JSONB        NOT NULL,
+    dedup_key       VARCHAR(64),             -- filled in by worker after upsert
+    outcome         VARCHAR(30)  NOT NULL,
+    -- received | accepted | duplicate | invalid | auth_failed | revoked | rate_limited | failed | webhook_failed
+    failure_reason  TEXT,
+    received_at_utc TIMESTAMPTZ  DEFAULT NOW()
+);
+
+CREATE TABLE recovery_queue (
+    id          SERIAL       PRIMARY KEY,
+    raw_payload JSONB        NOT NULL,  -- identical shape to normal Redis or edge_spool payload
+    created_at  TIMESTAMPTZ  DEFAULT NOW(),
+    processed   BOOLEAN      DEFAULT FALSE
+);
+
+CREATE TABLE webhooks (
+    id          SERIAL       PRIMARY KEY,
+    name        VARCHAR(100) NOT NULL,
+    url         TEXT         NOT NULL,
+    event_types TEXT[]       NOT NULL DEFAULT ARRAY['*'],  -- '*' = all types
+    priorities  TEXT[]       NOT NULL DEFAULT ARRAY['*'],
+    secret      VARCHAR(100) NOT NULL,
+    active      BOOLEAN      DEFAULT TRUE,
+    created_at  TIMESTAMPTZ  DEFAULT NOW()
+);
+```
+
+## 3.7 Edge Profile Addition: `edge_spool` (SQLite only)
+
+The edge deployment profile does **not** enqueue directly to Redis. Instead, it writes the canonical event into a local SQLite-backed spool table. The merged `sentinel-agent` claims rows from this table, processes them into local incidents and outbox entries, and retries safely after process restart or backhaul loss.
+
+```sql
+CREATE TABLE edge_spool (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    payload      TEXT        NOT NULL,  -- canonical JSON payload including _log_id
+    status       TEXT        NOT NULL DEFAULT 'pending',
+                                     -- pending | processing | processed
+    attempts     INTEGER     NOT NULL DEFAULT 0,
+    last_error   TEXT,
+    available_at TEXT        NOT NULL,
+    lease_until  TEXT,
+    processed_at TEXT,
+    created_at   TEXT        NOT NULL
+);
+```
+
+Key rules:
+
+- API writes one row per accepted event.
+- Edge agent claims oldest `pending` rows first.
+- A stale `processing` lease is re-queued deterministically.
+- `recovery_queue` still exists as the last-resort enqueue fallback if even the local spool write path fails unexpectedly.
+
+## 3.8 Indexes
+
+```sql
+-- Dedup: DB-level uniqueness — authoritative guard
+CREATE UNIQUE INDEX idx_incidents_dedup        ON incidents(dedup_key);
+CREATE INDEX idx_incidents_node_id             ON incidents(node_id);
+CREATE INDEX idx_incidents_status              ON incidents(status);
+CREATE INDEX idx_incidents_received_at         ON incidents(received_at_utc DESC);
+CREATE INDEX idx_incidents_priority            ON incidents(priority);
+CREATE INDEX idx_alerts_incident_id            ON alerts(incident_id);
+CREATE INDEX idx_alerts_status                 ON alerts(status);
+CREATE INDEX idx_outbox_status_available       ON outbox(status, available_at)
+    WHERE status = 'pending';
+CREATE UNIQUE INDEX idx_outbox_dedupe           ON outbox(dedupe_key);
+CREATE INDEX idx_recovery_unprocessed          ON recovery_queue(created_at ASC)
+    WHERE processed = FALSE;
+CREATE INDEX idx_logs_node_id                  ON logs(node_id);
+CREATE INDEX idx_logs_outcome                  ON logs(outcome);
+CREATE INDEX idx_logs_received_at              ON logs(received_at_utc DESC);
+CREATE INDEX idx_webhooks_active               ON webhooks(active);
+-- edge profile
+CREATE INDEX idx_edge_spool_claim             ON edge_spool(status, available_at, id);
+```

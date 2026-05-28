@@ -1,0 +1,61 @@
+---
+title: "13. Reference"
+description: "Redis channels, outbox transports, HTTP status codes, process ownership matrix, and rollout plan."
+section: "Reference"
+order: 15
+---
+
+# 13. Reference
+
+## 13.1 Redis and Outbox Reference
+
+| Channel | Publisher | Subscriber | Payload / Purpose |
+|---------|-----------|------------|------------------|
+| `incidents:new` | Outbox Dispatcher | Elixir RedisSubscriber | 9-field incident summary. First transmission only. |
+| `alerts:gsm_fallback` | Outbox Dispatcher | Jesse's gateway | Published after 3 AT failures. Gateway sends via SIM800L. |
+
+| Outbox Channel | Produced By | Consumed By | Purpose |
+|----------------|-------------|-------------|---------|
+| `realtime` | Worker / Edge Agent | Dispatcher | Publish first-transmission incident summaries to Redis `incidents:new`. |
+| `sms` | Worker / Edge Agent | Dispatcher | Deliver Africa's Talking SMS, then GSM fallback if required. |
+| `webhook` | Worker / Edge Agent | Dispatcher | Deliver incident webhooks per configured destination. |
+| `uplink` | Edge Agent only | Dispatcher / Edge Agent loop | Replay flat accepted ingest payloads to the central `POST /ingest` endpoint. |
+
+## 13.2 HTTP Status Code Contracts
+
+| Code | Condition | Logged To |
+|------|-----------|-----------|
+| `200` | Event accepted and handed off to Redis, `edge_spool`, or `recovery_queue`. | `logs` outcome = `received` → updated to `accepted`/`duplicate` downstream |
+| `403` | Invalid `X-API-Key` or invalid `X-Gateway-Signature`. | `logs` outcome = `auth_failed` (exception handler) |
+| `403` | Revoked `node_id`. | `logs` outcome = `revoked` |
+| `404` | Incident not found on `GET /api/incidents/:id`. | Not logged |
+| `409` | Invalid incident status transition. | Not logged |
+| `429` | Per-node or deployment ingest rate exceeded. | `logs` outcome = `rate_limited` |
+| `422` | Hard validation failure (`node_id`, `event_type`, `confidence`, timestamp window). | `logs` outcome = `invalid` (exception handler) |
+| `503` | **Never returned.** Queue or spool failure falls back to durable recovery storage. | — |
+
+## 13.3 Process Ownership Matrix
+
+| Table | Sole Writer | Readers | Key Rule |
+|-------|-------------|---------|----------|
+| `incidents` | RQ Processing Worker (central) / Edge Agent (edge) | Dashboard API, Elixir, edge-local APIs | **API never writes here.** |
+| `devices` | API Handler | Worker (read only), Dashboard API | Updated on every valid ingest only. |
+| `alerts` | Alert engine (worker / edge-agent transaction) | Dashboard API | Row created before delivery. Updated after. |
+| `outbox` | Processing Worker / Edge Agent (within transaction) | Outbox Dispatcher / Edge Agent | `UNIQUE dedupe_key` prevents duplicates on retry. |
+| `logs` | API + exception handlers; worker updates outcome | Dashboard API | Every request attempt → one row. |
+| `recovery_queue` | API handler (enqueue failure) | Recovery Worker / Edge Agent | `processed=TRUE` before re-enqueue. |
+| `webhooks` | Admin/API endpoints | Outbox Dispatcher / Edge Agent | `active` flag controls delivery eligibility. |
+| `locations` | Manual at deployment | Worker cache, Dashboard API, Elixir, Edge Agent | No runtime writer. |
+| `edge_spool` | Edge API handler | Edge Agent | Edge-only durable accepted-event queue. |
+
+## 13.4 Pilot-to-Production Rollout Plan
+
+| Horizon | Focus | Gate |
+|---------|-------|------|
+| **Immediate** | Unified threat model, per-node secrets, timestamp validation, signed firmware plan, edge uplink verification | A single compromised node cannot impersonate the rest of the fleet and edge replay can rejoin the central pipeline cleanly |
+| **30 days** | Retention jobs, ingest rate limits, centralized logging, anomaly alerts | Operators can detect abusive nodes and the platform can purge expired data automatically |
+| **90 days** | 4,500 packets/hour load test, published mesh limits, OpenAPI artifact, incident-response drills | Team can prove scale limits and rehearse recovery before a critical deployment |
+
+<Callout type="warning" title="Deployment Rule">
+  If the team cannot answer what breaks first for a single node, a leader, and the full mesh, the deployment is still in pilot mode.
+</Callout>

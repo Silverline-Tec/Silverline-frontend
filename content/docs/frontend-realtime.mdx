@@ -1,0 +1,100 @@
+---
+title: "Realtime Integration"
+description: "Phoenix WebSocket connection, backlog behavior, event normalization, stats updates, and REST fallback."
+section: "Dashboard"
+order: 4
+---
+
+# Realtime Integration
+
+## Service Boundary
+
+The frontend connects to the Elixir/Phoenix realtime service that lives inside `sentinel-backend/sentinel-realtime`.
+
+```txt
+Browser
+  -> ws://127.0.0.1:4000/socket
+  -> Phoenix channel incidents:live
+```
+
+In production, this URL should be exposed through the deployment's public realtime endpoint or reverse proxy.
+
+## Environment Variable
+
+The browser-side socket URL is configured with:
+
+```bash
+NEXT_PUBLIC_SENTINEL_REALTIME_URL=ws://127.0.0.1:4000/socket
+```
+
+This value is public because browser JavaScript must open the WebSocket. Do not put secrets in `NEXT_PUBLIC_*` variables.
+
+## Channel Contract
+
+| Item | Value |
+|------|-------|
+| Socket path | `/socket` |
+| Topic | `incidents:live` |
+| Backlog event | `backlog` |
+| New event | `new_incident` |
+| Backlog size | 50 incidents |
+
+## Backlog Load
+
+On channel join, Phoenix pushes:
+
+```json
+{
+  "incidents": [
+    {
+      "incident_id": 123,
+      "node_id": "node-12",
+      "event_type": "motion_detected",
+      "confidence": 0.92,
+      "priority": "high",
+      "status": "open",
+      "received_at_utc": "2026-05-28T01:42:30Z",
+      "location_label": "North Gate",
+      "dedup_uncertain": false
+    }
+  ]
+}
+```
+
+The frontend normalizes snake_case payload fields into the same camelCase shape used by REST responses.
+
+## New Incident Behavior
+
+When `new_incident` arrives:
+
+1. The incident is normalized.
+2. The live alert feed prepends it.
+3. Duplicate incident IDs are ignored.
+4. The stats strip increments open, critical, and last-hour counts where appropriate.
+5. If the incident matches the current history filters and the user is on page 1, it is prepended to the history table.
+6. `lastSyncAt` updates immediately.
+
+## REST Fallback
+
+REST polling still runs every 10 seconds. This is intentional.
+
+| Realtime path | REST path |
+|---------------|-----------|
+| Fast operator updates | Correction and consistency |
+| Backlog and new events | Full stats, devices, system metrics, history filters |
+| Can disconnect temporarily | Source of truth refresh |
+
+If the socket is down, the dashboard should still be useful through periodic REST refreshes.
+
+## Where The Code Lives
+
+| File | Responsibility |
+|------|----------------|
+| `app/dashboard/page.tsx` | Socket setup and lifecycle |
+| `components/dashboard/utils.ts` | `normalizeRealtimeIncident`, socket URL resolution |
+| `components/dashboard/types.ts` | Realtime payload types |
+
+## Safety Rules
+
+Do not add secrets to WebSocket query params. If realtime authentication is added later, prefer short-lived tokens minted by a server route, not long-lived dashboard keys in the browser.
+

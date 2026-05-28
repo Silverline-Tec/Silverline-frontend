@@ -1,0 +1,292 @@
+---
+title: "12. Production Hardening"
+description: "Threat model, key management, time trust, retention, observability, scale, and incident response requirements."
+section: "Security"
+order: 14
+---
+
+# 12. Production Hardening
+
+This section closes the gap between a **pilot-ready** system and a system that can survive **adversarial, long-lived field deployment**. Unless stated otherwise, the controls in this section are **required for production** and should be treated as normative requirements for the next release train.
+
+## Production Readiness Scorecard
+
+| Control Area | Specified | Implementation Status | Verification Status | Primary Owner |
+|--------------|-----------|-----------------------|---------------------|---------------|
+| Per-node HMAC keys | ✅ | Pending | Pending | Security + Embedded |
+| Key rotation + overlap window | ✅ | Pending | Pending | Platform |
+| Firmware signing + rollback | ✅ | Pending | Pending | Firmware |
+| Time synchronization protocol | ✅ | Pending | Pending | Embedded |
+| Observability + alerting | ✅ | Pending | Pending | SRE / Platform |
+| Data governance + retention | ✅ | Pending | Pending | Platform + Legal / Privacy |
+
+## 12.1 Unified Threat Model
+
+### System Trust Boundary Map
+
+| Boundary | Trusted Asset | Main Failure Mode | Required Control |
+|----------|---------------|-------------------|------------------|
+| Hardware node ↔ LoRa mesh | Node identity, RTC, captured evidence reference | Spoofed node, replayed frame, stale timestamps | Per-node HMAC key, sequence tracking, FTSP time sync |
+| LoRa mesh ↔ Leader / Gateway | Packet integrity, route metadata, buffer contents | Leader compromise, selective drop, packet replay | Mesh auth verification, buffered audit trail, leader attestation on boot |
+| Gateway ↔ Software platform | Canonical JSON body, gateway identity | Gateway forges or suppresses payloads | `X-Gateway-Signature`, gateway API key, central log correlation |
+| Software platform ↔ Operator surfaces | Incident records, alerts, evidence metadata | Over-broad dashboard/API access, silent data deletion | Scoped API keys, audit logs, retention jobs, least-privilege DB access |
+
+### Blast Radius Definitions
+
+| Compromise Scope | What Breaks First | Acceptable Blast Radius | Detection Signal | Immediate Response |
+|------------------|-------------------|-------------------------|------------------|--------------------|
+| Single node | False or replayed events from one sensor | One device only | Signature mismatch spike, rate anomaly, drift spike, device tamper state | Revoke node, quarantine location, retrieve hardware |
+| Leader / gateway | Forged payloads, dropped uploads, broken time broadcasts | One mesh only | Missing heartbeat, multi-node silence, invalid signature surge, buffer audit mismatch | Stop ingest for affected gateway, rotate gateway secret, fail over to spare leader |
+| Mesh-wide / control plane | Cross-node spoofing, key leakage, mass replay | Entire deployment | Sudden fleet-wide auth failures, correlated drift, impossible route churn, alert flood | Freeze alert fan-out, regenerate node keys, staged redeploy by sector |
+
+<Callout type="warning" title="Production Assumption">
+  Shared network secrets are not acceptable in production. A compromise of one node must not let an attacker impersonate the rest of the mesh.
+</Callout>
+
+## 12.2 Key Management Protocol
+
+| Requirement | Production Rule |
+|------------|-----------------|
+| Node identity | Each node has a unique `node_id` and unique HMAC secret. No shared mesh key across the deployment. |
+| Secret storage | Source of truth lives in HashiCorp Vault or AWS Secrets Manager. `.env` is allowed for local development only. |
+| Gateway lookup | Gateway verifies mesh packets by looking up the node secret by `node_id` and `key_version`, then strips mesh auth fields before forwarding. |
+| Rotation cadence | Rotate node HMAC keys quarterly and on compromise. Support overlap: `current` + `next` key valid for 7 days during rollout. |
+| Revocation | Ingestion API maintains a denylist by `node_id`. Gateway firmware enforces revoked `key_version` values before forwarding. Revoked nodes are rejected even if the gateway forwarded a validly signed payload. |
+| Audit trail | Every rotation, revocation, and emergency override must produce an audit event with actor, time, reason, and affected nodes. |
+
+<Callout type="info" title="Current Mesh Design Baseline">
+  The current radio design already documents **HMAC-SHA256 authentication tags on LoRa packets** and **AES-128 encryption for Leader MicroSD storage**. That is a good pilot baseline, but it is still incomplete for production until secret provisioning, rotation, revocation, and at-rest key custody are governed centrally.
+</Callout>
+
+### Rotation Workflow
+
+1. Provision next-quarter secrets in Vault/Secrets Manager.
+2. Push new `key_version` to hardware during a controlled maintenance window.
+3. Gateway accepts both old and new versions for 7 days.
+4. After verification, expire the old version and update the denylist if any node failed rollover.
+
+## 12.3 Time Synchronization Protocol and Validation
+
+| Requirement | Production Rule |
+|------------|-----------------|
+| Mesh clock source | Use FTSP or equivalent flooding time-sync protocol across the mesh. |
+| Leader authoritative source | Leader syncs to NTP whenever trusted backhaul is available. GPS is the preferred fallback when the hardware profile supports it. |
+| Leader behavior | Leader broadcasts UTC when online and includes monotonic sequence markers for drift estimation. |
+| Node behavior | Nodes fit drift using linear regression and adjust local RTC gradually, not by abrupt wall-clock jumps. |
+| Backend validation | Reject packets older than 24 hours or more than 1 hour in the future. |
+| Telemetry | Persist `clock_drift_ms`, `time_source`, and last sync age per node for observability and alerting. |
+
+### Protocol Parameters
+
+| Parameter | Default | Rule |
+|-----------|---------|------|
+| FTSP sync interval | 6 hours | Leader broadcasts fresh time at least every 6 hours and immediately after regaining authoritative time |
+| Drift model window | Last 10 sync events | Nodes fit a linear regression over the most recent sync samples |
+| Future skew tolerance | ±1 hour | Packets beyond this future window are rejected by the backend |
+| Node stale-sync threshold | 18 hours | Node is marked degraded and surfaces a health event |
+| Authoritative-time expiry at Leader | 24 hours | Leader must stop claiming authoritative `ftsp` time after 24 hours without NTP/GPS refresh |
+
+```ini
+[ftsp_defaults]
+sync_interval = 6h
+future_skew_tolerance = +/-1h
+stale_past_window = 24h
+drift_algorithm = linear_regression
+drift_model_window = 10_samples
+```
+
+### Degraded-Time Behavior
+
+- If the Leader loses authoritative time, it may continue forwarding packets, but the resulting records must be marked `leader_rebroadcast` or `local_rtc`, never `ftsp`.
+- If a node has no trusted sync and only a local RTC, the backend may still accept the event if it falls within the 24-hour / 1-hour validation window.
+- If the Leader has been without authoritative time for more than 24 hours, operators must be alerted and the deployment is in degraded mode until time trust is restored.
+
+### Time Source Values
+
+| Value | Meaning |
+|-------|---------|
+| `ftsp` | Node timestamp synced from the leader using the mesh protocol |
+| `leader_rebroadcast` | Gateway stamped time because the node omitted a usable timestamp |
+| `local_rtc` | Node used unsynced local RTC; accepted only if within policy window |
+| `unknown` | No trustworthy event timestamp available |
+
+## 12.4 Secure Firmware Updates
+
+| Control | Requirement |
+|---------|-------------|
+| Image signing | All firmware images must be signed with Ed25519. |
+| Verification | ESP32 verifies the Ed25519 signature before flashing. Unsigned or stale-key images are rejected. |
+| Rollback safety | Use A/B partitions so a failed boot returns to the previous known-good image. |
+| Update authorization | Require a physical button press or jumper confirmation before applying the update package. |
+| Key custody | Firmware signing keys live in an HSM-backed or managed signing service, never on engineer laptops. |
+
+## 12.5 Data Retention and Privacy
+
+| Data Class | Retention | Enforcement |
+|-----------|-----------|-------------|
+| MicroSD buffer on Leader / gateway | 7 days max | Local job deletes uploaded or expired segments daily |
+| Central incident database | 90 days for incidents | Scheduled DB purge or partition drop |
+| Device health / telemetry | 30 days | Scheduled DB purge |
+| Evidence video / clip references | 30 days unless flagged for review | Flagged rows exempt until review status clears |
+
+Additional requirements:
+
+- Privacy policy must disclose retention windows, operator access, and evidence handling.
+- Deletion jobs must write audit records summarizing how many rows or files were purged.
+- PostgreSQL retention is implemented with scheduled jobs or partitions; PostgreSQL does not provide native TTL.
+- Evidence data must not cross the deployment region boundary unless a legal / privacy review explicitly approves the transfer path.
+
+## 12.6 Rate Limiting and DoS Protection
+
+| Control | Threshold | Action |
+|--------|-----------|--------|
+| Per-node ingest limit | 45 packets/hour | Return `429`, log `rate_limited`, increment node strike counter |
+| Per-deployment ingest limit | 1,000 packets/hour per deployment | Return `429`, trip deployment-level circuit breaker |
+| Sudden-node anomaly | More than 10 packets/hour from a node that is normally quiet | Raise operator alert and mark device `needs_review` |
+| Circuit breaker | Sustained traffic above 200% of node baseline | Reject traffic for a cool-down period and require manual review |
+
+<Callout type="info" title="Different Kinds of Rate Limiting">
+  Ingress rate limits protect the platform from abuse. Alert-rule throttles in §8 protect operators from duplicate notifications. They serve different purposes and both are required.
+</Callout>
+
+### Required Rate-Limit Telemetry
+
+- Expose `rate_limit_hits_total`, `circuit_breaker_trips_total`, and `anomaly_alerts_total`.
+- Add an operator dashboard widget for `Nodes exceeding baseline`.
+- Alert when more than 5 distinct nodes are rate-limited within 1 hour.
+
+## 12.7 Observability Requirements
+
+### Required Dashboards
+
+| Dashboard | Must Show |
+|-----------|-----------|
+| Fleet health | Node uptime, battery, RSSI/SNR, sync age, buffer fill %, stale devices |
+| Ingest pipeline | Request rate, 403/422/429 rates, ingest latency p99, queue depth, recovery backlog, edge spool depth when edge profile is in use |
+| Security operations | Revoked-node attempts, rate-limit hits, circuit-breaker trips, key-rotation success, firmware rollout status |
+
+### Hardware Metrics
+
+| Metric | Why It Matters |
+|--------|----------------|
+| RSSI / SNR | Detect weak links and route instability |
+| Battery percentage | Identify impending node outages |
+| Buffer fill percentage | Predict local data loss before upload resumes |
+| Clock drift and last sync age | Detect time-trust failures early |
+
+### Metrics and Alert Thresholds
+
+| Metric | Collection Point | Alert Threshold |
+|--------|------------------|-----------------|
+| `node_packet_loss_pct` | Leader / mesh telemetry | >10% over 1 hour |
+| `mesh_route_changes_per_hour` | Leader / relay cache | Sudden 3x baseline increase |
+| `ingest_latency_p99_ms` | Ingestion API | >5 seconds |
+| `queue_backlog_oldest_age_s` | Worker / recovery queue / edge agent | >120 seconds |
+| `edge_spool_pending` | Edge API + edge agent | Any sustained upward trend during normal connectivity |
+| `uplink_backlog_oldest_age_s` | Edge agent outbox | >300 seconds when central control-plane is reachable |
+| `alert_delivery_p99_s` | Outbox dispatcher | >30 seconds |
+| `key_rotation_success_rate` | Secrets control plane | `&lt;95%` by end of 7-day overlap |
+| `firmware_update_failure_rate` | Firmware rollout controller | >1% per deployment wave |
+| `revoked_node_attempts_total` | Gateway + API | Any non-zero after revocation window |
+
+### Correlation and Logging Schema
+
+Logs from API, worker, dispatcher, edge agent, gateway, and Leader must ship to a centralized sink such as ELK or Datadog. Each log event should carry the following correlation keys whenever available:
+
+| Field | Purpose |
+|-------|---------|
+| `trace_id` | End-to-end correlation across Leader upload, API ingest, worker processing, and alert dispatch |
+| `node_id` | Field device identity |
+| `gateway_id` | Leader / gateway identity |
+| `mesh_message_id` | Radio-layer message identity for flood / ACK tracing |
+| `_log_id` | Exact ingest-request correlation key |
+| `incident_id` | Persistent central record identity after worker upsert |
+
+Production deploys should alert on:
+
+- any revoked node still attempting upload
+- missing gateway heartbeat for more than 5 minutes
+- queue backlog older than 2 minutes
+- edge uplink backlog older than 5 minutes when the central endpoint is healthy
+- alert delivery p99 above 60 seconds
+- key rotation overlap window closing below 95% success
+- firmware failure rate above 1% in a rollout wave
+
+### SLOs and SLIs
+
+| Objective | Target |
+|-----------|--------|
+| Ingest acceptance latency p99 | `&lt;5 seconds` |
+| Alert delivery latency p99 | `&lt;30 seconds` |
+| Revocation propagation time | `&lt;5 minutes` |
+| Key rotation completion rate | ≥95% within the 7-day overlap window |
+
+## 12.8 Data Governance
+
+| Data Class | Allowed Purpose | Access Scope | Default Action at Retention Boundary |
+|-----------|-----------------|--------------|--------------------------------------|
+| Incident metadata | Detection, triage, reporting, audits | Operators + incident responders | Delete after retention unless under review hold |
+| Evidence references / clip IDs | Case linkage and evidence review | Restricted investigators / supervisors | Delete after retention unless explicitly preserved |
+| Device health telemetry | Operations and maintenance | SRE / platform operators | Delete after retention |
+| Security logs | Abuse detection, forensics, audits | Security / incident response | Delete per security-retention policy unless hold applied |
+
+Additional governance requirements:
+
+- Maintain a data inventory describing every stored field, its purpose, and its retention owner.
+- Require explicit review-hold flags for incidents or evidence that must outlive default retention.
+- Document operator roles and least-privilege access for incident review, evidence review, and admin actions.
+- Obtain legal / privacy review for each deployment region before collecting production data.
+
+## 12.9 Scalability Testing and Published Limits
+
+| Test | Target |
+|------|--------|
+| Steady-state load | 100 nodes × 45 packets/hour = 4,500 packets/hour |
+| Leader capacity | Measure buffer size under one-hour backhaul outage |
+| ESP32 health | Measure heap usage, route-table size, and failed retransmissions |
+| Protocol envelope | Publish max nodes per mesh, max hops, and max packet size |
+
+If a single mesh cannot stay within the published limits, shard the deployment into multiple meshes with independent leaders and independent gateway credentials.
+
+## 12.10 Integration Contract
+
+| Requirement | Rule |
+|------------|------|
+| OpenAPI | Publish the ingestion API as an OpenAPI artifact generated from the FastAPI app and check it into the repo for hardware-team review. |
+| JSON schema | Preserve the flat ingest schema from §4 and §5 with exact field types and validation rules. |
+| HMAC documentation | Keep the canonical body serialization and signature algorithm in §4.5 versioned and unchanged without coordinated rollout. |
+| Integration tests | Maintain simulator-driven tests that exercise mesh payload → gateway transform → signed `/ingest` request → worker enqueue, plus edge `POST /ingest` → local SQLite spool → signed uplink replay to the central API. |
+
+Sample artifact: [sentinel-ingestion-openapi.sample.json](/openapi/sentinel-ingestion-openapi.sample.json)
+
+## 12.11 Incident Response Playbooks
+
+| Scenario | First Hour Actions |
+|---------|--------------------|
+| Node compromise | Revoke node, stop trusting its evidence, retrieve hardware, image storage, rotate only that node's secret set |
+| Leader / gateway compromise | Stop ingestion for that gateway, export local buffer for forensics, rotate gateway secret, reflash firmware, re-enroll nodes |
+| Mass compromise | Suspend fan-out alerts, freeze configuration changes, regenerate all node secrets, redeploy by sector with staged validation |
+| Data breach | Preserve logs, determine exposed data classes, notify stakeholders on the legal timeline, publish externally only after legal review |
+
+## 12.12 Pre-Deployment Validation Checklist
+
+| Validation Item | Pass Criteria | Evidence |
+|-----------------|---------------|----------|
+| Key rotation test | One node rotates to a new `key_version`; old + new keys work during overlap; old key fails after cutover | Rotation logs + successful and failed ingest traces |
+| Firmware rollback test | Bad image fails safely and device returns to previous slot | Boot log + rollback event |
+| DoS simulation | Test node sends 100 packets/hour and is throttled with `429` plus anomaly signal | API logs + dashboard counter |
+| Node-compromise drill | Revoked node is rejected end-to-end in under 5 minutes | Revocation audit + rejected requests |
+| Time-source loss drill | Leader loses NTP/GPS, deployment enters degraded mode, operator alert fires, packets are re-labeled by time source | Leader logs + operator alert |
+| Backhaul outage drill | Leader buffers locally, reconnect flush succeeds, duplicate upload is not created; edge uplink backlog also drains cleanly after restore if edge profile is used | Buffer audit + ingest logs |
+| Trace-correlation drill | A single event can be followed from `mesh_message_id` to `_log_id` to `incident_id` | Centralized log query |
+| Retention purge drill | Expired records are deleted and the purge emits an audit summary | Purge report |
+| Privacy / legal sign-off | Deployment region has documented privacy review and approved data inventory | Signed review artifact |
+| Security assessment | Scope-defined penetration test or equivalent review completed before go-live | Security report |
+
+### Success Criteria Before Production Deployment
+
+- The team can answer what breaks first for a single node, a leader, and the full mesh.
+- A revoked node is blocked within one control-plane update cycle.
+- A stale or future-dated packet is rejected deterministically.
+- The gateway can rotate secrets without downtime.
+- The team has run a 4,500 packets/hour simulation and published the measured limits.

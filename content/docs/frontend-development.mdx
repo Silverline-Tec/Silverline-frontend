@@ -1,0 +1,95 @@
+---
+title: "Frontend Development"
+description: "Local setup, pnpm workflow, verification rules, and safe frontend change process."
+section: "Operations"
+order: 6
+---
+
+# Frontend Development
+
+## Repository
+
+```bash
+cd /home/swaynel/Documents/projects/sentinel/silverline-frontend
+```
+
+## Package Manager
+
+Use `pnpm` for this Next.js app.
+
+```bash
+pnpm install
+pnpm dev
+```
+
+Do not use `npm` for this frontend unless the project owner explicitly asks for it.
+
+## Local Dependencies
+
+For a fully live dashboard, run the central backend stack first:
+
+```bash
+cd /home/swaynel/Documents/projects/sentinel/sentinel-backend
+docker compose up -d
+```
+
+Then run the frontend:
+
+```bash
+cd /home/swaynel/Documents/projects/sentinel/silverline-frontend
+pnpm dev
+```
+
+Open:
+
+```txt
+http://localhost:3000/dashboard
+```
+
+## Verification
+
+Use TypeScript checking for normal frontend changes:
+
+```bash
+pnpm lint
+```
+
+This project's `lint` script runs `tsc --noEmit`.
+
+Do not run production builds unless explicitly requested by the project owner.
+
+## Change Safety Rules
+
+| Rule | Why |
+|------|-----|
+| Keep the dashboard single-route | Operators should not lose state while switching views |
+| Keep secrets server-side | The dashboard key must not reach browser JavaScript |
+| Keep REST fallback | WebSocket failures should not blank the dashboard |
+| Keep payload normalization centralized | UI components should not know backend snake_case |
+| Keep visual language aligned with docs | The product should feel like one Sentinel system |
+| Prefer fewer, broader panels | Avoid card-heavy dashboards that are hard to scan |
+
+## Dashboard Component Boundaries
+
+When editing the dashboard:
+
+| Change | Start here |
+|--------|------------|
+| Data loading or socket lifecycle | `app/dashboard/page.tsx` |
+| Stats strip layout | `components/dashboard/stats-strip.tsx` |
+| Live feed row behavior | `components/dashboard/live-alert-feed.tsx` |
+| Device status view | `components/dashboard/device-status-panel.tsx` |
+| History filters/table/actions | `components/dashboard/incident-history-table.tsx` |
+| Right sidebar detail/status view | `components/dashboard/right-sidebar.tsx` |
+| Formatting/filter helpers | `components/dashboard/utils.ts` |
+
+## Common Local Failures
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `/api/control/*` returns 500 | Backend not running or wrong backend URL | Start central backend and check `SENTINEL_BACKEND_URL` |
+| 401/403 from proxy routes | Dashboard key mismatch | Copy the correct key from backend secrets |
+| Live updates offline | Phoenix realtime service not reachable | Check `NEXT_PUBLIC_SENTINEL_REALTIME_URL` and port `4000` |
+| Empty devices | No device records in backend yet | Ingest test traffic or seed device data |
+| TypeScript cannot find Phoenix types | Local type shim missing | Ensure `types/phoenix.d.ts` exists |
+

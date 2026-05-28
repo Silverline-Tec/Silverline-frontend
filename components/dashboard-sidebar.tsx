@@ -35,17 +35,17 @@ export function DashboardSidebar({ activeView, onCollapse, onViewChange }: Dashb
       initial={false}
       animate={{ width: collapsed ? 80 : 240 }}
       transition={{ duration: 0.3 }}
-      className="fixed left-0 top-16 h-[calc(100vh-4rem)] bg-sidebar border-r border-sidebar-border glow-border backdrop-blur-md flex flex-col"
+      className="fixed left-0 top-16 h-[calc(100vh-4rem)] bg-[#0f1215] border-r border-white/[0.07] backdrop-blur-md flex flex-col"
     >
       {/* Collapse Button */}
       <button
         onClick={toggleCollapse}
-        className="absolute -right-4 top-4 w-8 h-8 bg-cyan-400/20 hover:bg-cyan-400/40 border border-cyan-400/50 rounded-full flex items-center justify-center transition-all"
+        className="absolute -right-4 top-4 w-8 h-8 bg-[#151a1e] hover:bg-brand-500/10 border border-white/[0.12] rounded-full flex items-center justify-center transition-all"
       >
         {collapsed ? (
-          <ChevronRight className="w-4 h-4 text-cyan-400" />
+          <ChevronRight className="w-4 h-4 text-brand-400" />
         ) : (
-          <ChevronLeft className="w-4 h-4 text-cyan-400" />
+          <ChevronLeft className="w-4 h-4 text-brand-400" />
         )}
       </button>
 
@@ -63,28 +63,21 @@ export function DashboardSidebar({ activeView, onCollapse, onViewChange }: Dashb
               className={cn(
                 'flex w-full items-center gap-3 px-3 py-2 rounded-md transition-all duration-200 relative group text-left',
                 isActive
-                  ? 'bg-cyan-400/20 text-cyan-300 border border-cyan-400/40'
-                  : 'text-gray-400 hover:text-cyan-300 hover:bg-cyan-400/10'
+                  ? 'bg-brand-500/10 text-brand-400 border-l-2 border-brand-500 pl-[10px]'
+                  : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04] border-l-2 border-transparent'
               )}
             >
-              <Icon className={cn('w-5 h-5 flex-shrink-0', isActive && 'text-cyan-400')} />
+              <Icon className={cn('w-5 h-5 flex-shrink-0', isActive && 'text-brand-400')} />
               {!collapsed && (
                 <span className="text-sm font-mono whitespace-nowrap">{item.label}</span>
               )}
               {isActive && !collapsed && (
-                <div className="absolute right-2 w-1 h-1 bg-cyan-400 rounded-full" />
+                <div className="absolute right-2 w-1 h-1 bg-brand-400 rounded-full" />
               )}
             </button>
           );
         })}
       </nav>
-
-      {/* Bottom Items */}
-      <div className="border-t border-sidebar-border p-3 space-y-2">
-        <div className="px-3 py-2 text-xs font-mono text-gray-500">
-          {collapsed ? 'LIVE' : 'One-page dashboard'}
-        </div>
-      </div>
     </motion.aside>
   );
 }

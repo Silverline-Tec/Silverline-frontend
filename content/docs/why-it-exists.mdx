@@ -1,0 +1,78 @@
+---
+title: "1. Why the System Exists"
+description: "Goals, constraints, design trade-offs, and non-goals for Sentinel AI."
+section: "Introduction"
+order: 2
+---
+
+# 1. Why the System Exists
+
+## 1.1 Problem Statement
+
+Security operations in resource-constrained environments — remote perimeters, border corridors, agricultural facilities — cannot rely on continuous internet connectivity. Traditional cloud-based monitoring breaks down when connectivity is intermittent. Camera nodes must operate autonomously, detect incidents locally, and relay data opportunistically to a central operator.
+
+Sentinel AI solves this by pairing an offline-capable LoRa mesh with a backend platform that can be split into a **local edge appliance** and a **central control-plane** when the deployment needs to protect model resources on the edge box:
+- Ingests events reliably
+- Deduplicates retransmissions from a lossy mesh
+- Alerts operators by SMS
+- Presents live incident feeds on a dashboard
+
+**Without assuming continuous connectivity from any field device.**
+
+## 1.2 Goals
+
+| Goal | Definition | Measurable Outcome |
+|------|------------|--------------------|
+| **Reliable event ingestion** | Every event that reaches the gateway must be recorded, regardless of Redis availability or processing errors. | Every POST to `/ingest` produces a `logs` row. No event is silently dropped. |
+| **Idempotent deduplication** | The same physical incident may arrive multiple times due to mesh retransmission. The system must detect and merge duplicates without losing data. | Duplicate events increment `transmission_count`; no duplicate alerts or pubsub events fire. |
+| **Real-time operator notification** | A confirmed incident must reach the dashboard as a live WebSocket event within 2 seconds of processing. | `new_incident` event visible on dashboard within 2 seconds of `POST /ingest`. |
+| **Durable alert delivery** | SMS notifications must survive process crashes, with automatic fallback to GSM when Africa's Talking is unavailable. | Alert row persisted before delivery; GSM fallback triggered after 3 AT failures. |
+| **Offline resilience** | A Redis outage must not prevent incident recording or return 5xx to the gateway. | Redis failure → 200 accepted + `recovery_queue` row; no 503 returned. |
+| **Edge autonomy with eventual uplink** | An edge node must keep accepting events locally during backhaul loss, then replay them to the central stack later without inventing a second contract. | Accepted events persist in SQLite + `edge_spool`; optional `uplink` outbox rows replay to central `POST /ingest` when connectivity returns. |
+| **Full auditability** | Every request attempt, processing outcome, and delivery action must be queryable for post-incident review. | `logs` covers all HTTP outcomes; `alerts` covers all delivery attempts per destination. |
+| **Demo fallback** | The full software pipeline must be demonstrable without hardware. | `inject_demo_event.py` triggers end-to-end processing including SMS and dashboard update. |
+
+## 1.3 System Constraints
+
+| Constraint | Nature | Impact on Design |
+|------------|--------|-----------------|
+| LoRa mesh delivers events with possible duplicate transmissions and clock drift | Hardware | Deduplication must be multi-level; timestamps cannot be authoritative alone. |
+| Node RTCs drift and may be unavailable | Hardware | `received_at_utc` (server time) is the authoritative field; `event_time_utc` is advisory. |
+| Africa's Talking is the only SMS provider with a Kenya-native sandbox | External dependency | No Twilio fallback. GSM via gateway SIM800L is the only fallback path. |
+| Single VPS — no redundancy | Operational | All services share one host. Docker restart policies are the availability mechanism. |
+| Edge device shares resources with local inference | Operational | Edge support services must stay lightweight; SQLite and a merged agent are preferred over local PostgreSQL + Redis + multiple Python runtimes. |
+| Competition timeline: 4 weeks | Schedule | No time for multi-region, managed DB, or complex auth infrastructure. |
+| Two teams: software (this doc) and hardware (Jesse/mesh) | Team structure | Gateway handoff is the only integration boundary. Backend must not depend on firmware internals. |
+| HMAC stripped at gateway — backend does not re-validate mesh HMAC | Security model | Gateway API key + payload signature are the only backend authentication mechanisms. |
+| `EventType` enum is a shared contract with firmware | Coordination | New event types require coordinated deployment on both sides. |
+
+## 1.4 Design Trade-offs
+
+| Decision | Choice Made | What Was Sacrificed | Reason |
+|----------|-------------|---------------------|--------|
+| Validation model | Tiered hard/soft reject | Uniform strictness | Identity fields must be present. Metadata fields default gracefully. |
+| Worker library | RQ (Redis Queue) | Celery, raw consumer | RQ is simpler to operate on a single node; Celery's complexity is unjustified here. |
+| Worker execution | Fully synchronous (`psycopg2`) | Async worker | Mixing async/sync DB drivers in one process causes subtle pool and event loop issues. |
+| Redis failure path | `recovery_queue` table, 200 returned | 503 fail-fast | Gateway has limited retry logic; a 503 drops events. `recovery_queue` ensures no loss. |
+| Python→Elixir signal | Redis pubsub | PostgreSQL LISTEN/NOTIFY | Pubsub is one call. LISTEN/NOTIFY requires a persistent notification-handling connection. |
+| Side-effect safety | Transactional outbox | Simpler fire-and-forget | Worker crash after incident upsert but before delivery silently loses notifications. Outbox prevents this. |
+| Edge persistence | SQLite + durable local spool | Running PostgreSQL + Redis on every edge node | SQLite reduces memory and operational overhead on constrained edge devices while preserving crash-safe local buffering. |
+| Edge background services | Merged `sentinel-agent` loop | Separate worker + dispatcher + recovery containers on the edge | A single long-lived process lowers memory overhead while preserving the same logical processing stages. |
+| Edge → central sync | Replay accepted events to the central `POST /ingest` contract | Replicate local incident rows directly upstream | Reusing the signed ingest contract keeps one external boundary, one auth model, and one central source of truth. |
+| Rate limiting | Redis sorted sets (durable) | In-memory counters | In-memory counters reset on worker restart; Redis counters survive restarts and scale across workers. |
+| Webhook registry | DB-backed `webhooks` table | In-memory config list | DB enables lifecycle management and per-destination audit without changing delivery logic. |
+| Dedup fallback anchor | `request_id` (`log_id`) when no `evidence_ref`/`ts` | Reject anchorless events | Discarding anchorless events silences legitimate incidents. Preserving with `dedup_uncertain=TRUE` gives operators visibility. |
+
+## 1.5 Non-Goals (Explicitly Out of Scope)
+
+<Callout type="warning">
+  The following **must not influence design decisions** during the current phase.
+</Callout>
+
+- Public webhook registration endpoint
+- Web push or mobile push notifications (SMS only)
+- Multi-VPS or high-availability deployment
+- JWT or OAuth authentication
+- Full-text search on incidents
+- Video storage or evidence file management
+- On-device AI inference or LoRa mesh protocol details

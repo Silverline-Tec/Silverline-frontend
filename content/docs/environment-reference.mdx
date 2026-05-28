@@ -1,0 +1,210 @@
+---
+title: "11A. Environment Reference"
+description: "Canonical environment-variable reference for central control-plane, edge profile, and realtime services."
+section: "Operations"
+order: 13
+---
+
+# 11A. Environment Reference
+
+This page is the **canonical environment-variable reference** for the current Sentinel implementation.
+
+It covers:
+
+- the Python backend in both **central** and **edge** profiles
+- the Elixir/Phoenix realtime service in `sentinel-backend/sentinel-realtime`
+- local Compose / TLS bootstrap values used by the current deployment assets
+
+<Callout type="info" title="Use This Page as Source of Truth">
+  The deployment chapter gives the operational flow. This page answers three narrower questions for each variable: **where it is required**, **how to acquire it**, and **what it is used for**.
+</Callout>
+
+For the edge runtime behavior that these variables control, see [10A. Edge Device Runtime](/docs/edge-device-runtime).
+
+## 11A.1 Starting Files
+
+| File | Use |
+|------|-----|
+| `sentinel-backend/.env.example` | Central control-plane baseline |
+| `sentinel-backend/.env.edge.example` | Edge-profile baseline |
+| `sentinel-backend/sentinel-realtime/config/runtime.exs` | Phoenix realtime env contract |
+
+## 11A.2 How to Acquire Values
+
+| Value Type | How to Acquire It |
+|------------|-------------------|
+| Random shared secrets | Generate with `openssl rand -hex 32` or `python -c "import secrets; print(secrets.token_hex(32))"` |
+| Database / Redis URLs | From local Compose service names, managed-service dashboards, or platform provisioning |
+| DNS / domain values | From the deployment DNS owner or cloud ingress configuration |
+| Africa's Talking credentials | From the Africa's Talking console / sandbox account |
+| Phone numbers | Assigned by operations or the receiving security team in E.164 format |
+| Vault / AWS settings | From the secrets-platform owner |
+| Thresholds and retention windows | From platform defaults, then adjust only with explicit operations approval |
+
+## 11A.3 Profile Selection and Storage / Queue Wiring
+
+| Variable | Required In | How to Acquire It | Use Case |
+|----------|-------------|-------------------|----------|
+| `SENTINEL_ENV_FILE` | Optional, any Python process | Choose the path to the env file you want the backend to load explicitly | Lets `uvicorn` / scripts load a non-default env file without sourcing it in the shell |
+| `STORE_BACKEND` | Required in real deployments | Choose `postgres` for central or `sqlite` for edge | Selects the persistence layer |
+| `QUEUE_BACKEND` | Required in real deployments | Choose `redis_rq` for central or `sqlite_spool` for edge | Selects the ingest handoff path |
+| `RATE_LIMIT_BACKEND` | Required in real deployments | Choose `redis` for central or `memory` for edge | Selects the ingress rate-limit storage backend |
+| `DATABASE_URL` | Required when `STORE_BACKEND=postgres`; required by Phoenix backlog queries | Build from local Compose names or copy from your managed PostgreSQL provider | Connects central services to PostgreSQL |
+| `DATABASE_ECHO` | Optional | Set to `true` only for debugging | Turns on SQLAlchemy SQL logging in the Python API |
+| `REDIS_URL` | Required when `QUEUE_BACKEND=redis_rq` or `RATE_LIMIT_BACKEND=redis`; required by Phoenix realtime | Build from local Compose names or copy from your managed Redis provider | Powers central queueing, pubsub, and Redis-backed rate limits |
+| `SQLITE_PATH` | Required when `STORE_BACKEND=sqlite` | Choose a persistent file path such as `/app/data/sentinel-edge.db` | Location of the edge SQLite database |
+| `SQLITE_BUSY_TIMEOUT_MS` | Optional but recommended for edge | Start with `5000` unless storage contention requires tuning | Controls how long SQLite waits on locked writes |
+| `QUEUE_NAME` | Optional, central only | Use the default `incidents` unless you intentionally shard queues | Names the RQ queue used by the central worker |
+
+## 11A.4 Authentication, API Keys, and Identity
+
+| Variable | Required In | How to Acquire It | Use Case |
+|----------|-------------|-------------------|----------|
+| `GATEWAY_API_KEY` | Required, all deployments | Generate a random secret and store it in Vault / AWS Secrets Manager or a secure env file for local work | Shared API key for hardware gateway callers hitting `POST /ingest` |
+| `GATEWAY_SIGNING_SECRET` | Required, all deployments | Generate at least 32 random bytes; provision the same value to the API and the hardware gateway | HMAC secret for `X-Gateway-Signature` verification |
+| `GATEWAY_ID` | Required, all deployments | Assign a stable identifier such as `gateway-01` | Included in the canonical signature string and logs |
+| `DASHBOARD_API_KEY` | Required when using `/api/*` operator routes | Generate a random secret and distribute only to trusted operator-facing clients | Authenticates dashboard / control clients to the backend API |
+| `WEBHOOK_SECRET` | Required when using webhook delivery or the Phoenix compatibility endpoint | Generate a random secret and store it with the rest of the runtime secrets | Sent on outbound webhooks and checked by the optional Phoenix `/internal/incidents` endpoint |
+| `DASHBOARD_WEBHOOK_URL` | Optional compatibility mode only | Point it at the internal Phoenix compatibility endpoint if you are intentionally using webhook fanout instead of Redis-first realtime | Registers an internal webhook at API startup |
+| `DASHBOARD_WEBHOOK_NAME` | Optional | Use the default `internal_dashboard` unless you need a distinct label | Human-readable name for the auto-registered compatibility webhook |
+| `REVOKED_NODE_IDS` | Optional but operationally important | Maintain this from the security / incident-response workflow as a comma-separated list | Immediate denylist for known-bad field nodes |
+
+## 11A.5 Edge-to-Central Uplink
+
+These variables are used only when an edge node should replay accepted events into a separate central control-plane.
+
+| Variable | Required In | How to Acquire It | Use Case |
+|----------|-------------|-------------------|----------|
+| `UPLINK_INGEST_URL` | Optional, edge only | Point to the central control-plane `POST /ingest` endpoint | Target URL for eventual replay from edge to central |
+| `UPLINK_API_KEY` | Required if `UPLINK_INGEST_URL` is set | Generate a dedicated API key for this edge node on the central side; do not reuse the hardware gateway key by habit | Authenticates edge replay requests to the central API |
+| `UPLINK_SIGNING_SECRET` | Required if `UPLINK_API_KEY` is set | Generate at least 32 random bytes and provision the same secret on the edge node and the central API | Signs edge replay requests using the same contract as hardware gateways |
+| `UPLINK_GATEWAY_ID` | Required if `UPLINK_INGEST_URL` is set | Assign a stable identity such as `edge-node-01` | Distinguishes uplink replay callers in central logs and auth checks |
+| `UPLINK_TIMEOUT_SECONDS` | Optional | Start with `10.0` and tune only if backhaul quality demands it | HTTP timeout for replay requests from edge to central |
+
+## 11A.6 Ingress Protection, Validation, and Fleet Controls
+
+| Variable | Required In | How to Acquire It | Use Case |
+|----------|-------------|-------------------|----------|
+| `GATEWAY_SIGNATURE_WINDOW_SECONDS` | Optional | Keep the default `300` unless you have a time-trust reason to change it | Acceptable request-signature age window |
+| `NODE_INGEST_LIMIT_PER_HOUR` | Optional but strongly recommended | Start with `45` from the platform spec | Per-node hard ingest limit |
+| `DEPLOYMENT_INGEST_LIMIT_PER_HOUR` | Optional but strongly recommended | Start with `1000` from the platform spec | Fleet-wide hard ingest limit |
+| `SUDDEN_NODE_CHATTER_THRESHOLD_PER_HOUR` | Optional | Start with `10` from the platform spec | Threshold for anomaly-marking a normally quiet node |
+| `QUIET_NODE_BASELINE_MAX_PER_HOUR` | Optional | Start with `5` from the platform spec | Defines what “normally quiet” means for anomaly checks |
+| `NODE_BASELINE_LOOKBACK_HOURS` | Optional | Start with `24` | Rolling window used for node baseline calculations |
+| `NODE_BASELINE_BREACH_MULTIPLIER` | Optional | Start with `2.0` | Trips node circuit breaker when current traffic exceeds this multiple of baseline |
+| `NODE_BASELINE_MIN_EVENTS` | Optional | Start with `12` | Minimum historical volume required before baseline-breach logic is trusted |
+| `NODE_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | Optional | Start with `900` | Manual-review cooldown for noisy individual nodes |
+| `DEPLOYMENT_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | Optional | Start with `300` | Cooldown period for deployment-wide ingest flood protection |
+| `MAX_PAST_AGE_SECONDS` | Optional | Start with `86400` | Maximum acceptable past age for `ts` |
+| `MAX_FUTURE_SKEW_SECONDS` | Optional | Start with `3600` | Maximum acceptable future skew for `ts` |
+| `STALE_DEVICE_AFTER_SECONDS` | Optional | Start with `600` | Device-staleness window for dashboard stats and fleet health |
+
+## 11A.7 Dispatcher, Alerting, and Pubsub
+
+| Variable | Required In | How to Acquire It | Use Case |
+|----------|-------------|-------------------|----------|
+| `ALERT_RECIPIENT_NUMBER` | Required if SMS alerts are enabled | Get the destination number from operations in E.164 format, e.g. `+2547...` | Primary SMS recipient |
+| `AT_USERNAME` | Required if Africa's Talking SMS is enabled | Copy from the Africa's Talking sandbox or production account | Africa's Talking account identifier |
+| `AT_API_KEY` | Required if Africa's Talking SMS is enabled | Copy from the Africa's Talking console | Auth for outbound SMS calls |
+| `AT_SENDER_ID` | Optional, SMS | Obtain from the Africa's Talking account if you have an approved sender ID | Sender identity shown on outbound SMS |
+| `AT_MESSAGING_URL` | Optional | Keep the default unless Africa's Talking changes endpoints or you need a test double | SMS HTTP endpoint override |
+| `INCIDENTS_PUBSUB_CHANNEL` | Optional, central realtime or edge remote-Redis relay | Usually keep `incidents:new` | Redis channel for live incident publish / subscribe |
+| `GSM_FALLBACK_CHANNEL` | Optional | Usually keep `alerts:gsm_fallback` | Redis channel used after Africa's Talking retries are exhausted |
+| `ALERT_DELIVERY_RETRY_ATTEMPTS` | Optional | Start with `3` | Number of retry attempts for SMS and webhook delivery |
+| `ALERT_DELIVERY_RETRY_DELAY_SECONDS` | Optional | Start with `30.0` | Delay between delivery retries |
+| `WEBHOOK_TIMEOUT_SECONDS` | Optional | Start with `5.0` | Timeout for outbound webhook and SMS HTTP calls |
+
+## 11A.8 Background Loop, Lease, and Retention Tuning
+
+| Variable | Required In | How to Acquire It | Use Case |
+|----------|-------------|-------------------|----------|
+| `PROCESSOR_BATCH_SIZE` | Optional, edge only | Start with `50` | Number of edge spool rows processed per loop |
+| `PROCESSOR_POLL_INTERVAL_SECONDS` | Optional, edge only | Start with `0.5` | Idle sleep between edge-agent processor passes |
+| `QUEUE_CLAIM_LEASE_SECONDS` | Optional, edge only | Start with `120` | Lease duration for claimed edge spool rows |
+| `DISPATCHER_BATCH_SIZE` | Optional | Start with `100` | Number of outbox rows claimed per dispatcher pass |
+| `DISPATCHER_POLL_INTERVAL_SECONDS` | Optional, central dispatcher loop | Start with `1.0` | Idle sleep between dispatcher passes |
+| `DISPATCHER_CLAIM_LEASE_SECONDS` | Optional | Start with `300` | Lease duration for claimed outbox rows |
+| `RECOVERY_BATCH_SIZE` | Optional | Start with `100` | Number of recovery rows processed per pass |
+| `RECOVERY_POLL_INTERVAL_SECONDS` | Optional | Start with `60.0` | Delay between recovery sweeps |
+| `INCIDENT_RETENTION_DAYS` | Optional | Start with `90` from the spec | Incident data retention window |
+| `TELEMETRY_RETENTION_DAYS` | Optional | Start with `30` from the spec | Device / log / telemetry retention window |
+| `OUTBOX_RETENTION_DAYS` | Optional | Start with `30` from the spec | Retention window for old outbox rows |
+
+## 11A.9 Secrets Backends and Observability
+
+| Variable | Required In | How to Acquire It | Use Case |
+|----------|-------------|-------------------|----------|
+| `SECRETS_BACKEND` | Required in real deployments | Choose `env`, `vault`, or `aws_secrets_manager` | Selects where runtime secrets are resolved from |
+| `SECRETS_PREFIX` | Required when using Vault / AWS Secrets Manager | Get the namespace / path prefix from the secrets-platform owner | Prefix for keys such as `gateway_api_key`, `webhook_secret`, `uplink_api_key`, and `uplink_signing_secret` |
+| `VAULT_ADDR` | Required when `SECRETS_BACKEND=vault` | Copy from the Vault cluster owner | Base URL of the Vault server |
+| `VAULT_TOKEN` | Required when `SECRETS_BACKEND=vault` | Provision via Vault auth or an injected bootstrap token | Auth token used to read secrets |
+| `AWS_REGION` | Required when `SECRETS_BACKEND=aws_secrets_manager` | Copy from the AWS deployment region | AWS region for Secrets Manager lookups |
+| `LOG_SINK_URL` | Optional but recommended in production | Get from the logging / SIEM team | Central log-ingest endpoint |
+| `LOG_SINK_TIMEOUT_SECONDS` | Optional | Start with `2.0` | Timeout for structured log shipping |
+
+## 11A.10 Elixir / Phoenix Realtime Service
+
+| Variable | Required In | How to Acquire It | Use Case |
+|----------|-------------|-------------------|----------|
+| `DATABASE_URL` | Required, `sentinel-backend/sentinel-realtime` in production | Same PostgreSQL source used by the central backend | Reads backlog rows on socket join |
+| `REDIS_URL` | Required, `sentinel-backend/sentinel-realtime` in production | Same Redis source used by the central dispatcher | Subscribes to `incidents:new` |
+| `SECRET_KEY_BASE` | Required, `sentinel-backend/sentinel-realtime` in production | Generate with `mix phx.gen.secret` or `openssl rand -hex 32` | Phoenix endpoint signing secret |
+| `PHX_HOST` | Required in production | Use the public hostname operators reach | Hostname embedded in Phoenix endpoint config |
+| `PORT` | Optional | Keep `4000` unless your container host or proxy requires a different port | HTTP listen port for Phoenix |
+| `POOL_SIZE` | Optional | Start with `10` unless load testing says otherwise | Ecto DB connection pool size |
+| `INCIDENTS_PUBSUB_CHANNEL` | Optional | Usually keep `incidents:new` | Channel Phoenix subscribes to for live incident fanout |
+| `WEBHOOK_SECRET` | Optional compatibility mode only | Reuse the same secret configured on the backend if you are using `/internal/incidents` | Authorizes the Phoenix compatibility webhook endpoint |
+
+## 11A.11 Local Compose, TLS, and Dev Bootstrap
+
+| Variable | Required In | How to Acquire It | Use Case |
+|----------|-------------|-------------------|----------|
+| `POSTGRES_DB` | Required for local central Compose | Choose a local DB name such as `sentinel` | Name of the local PostgreSQL database |
+| `POSTGRES_USER` | Required for local central Compose | Choose a local service username such as `sentinel` | Local PostgreSQL username |
+| `POSTGRES_PASSWORD` | Required for local central Compose | Generate a local password; it does not need to match production | Local PostgreSQL password |
+| `DOMAIN` | Required only when using the nginx / Certbot TLS bootstrap | Use the public hostname that resolves to your central server | Domain inserted into nginx config and used for certificate issuance |
+| `CERTBOT_EMAIL` | Required only for TLS bootstrap | Use an operations-owned email address | Email registered with Let's Encrypt |
+
+## 11A.12 Practical Minimum Sets
+
+### Central Control-Plane Minimum
+
+- `STORE_BACKEND=postgres`
+- `QUEUE_BACKEND=redis_rq`
+- `RATE_LIMIT_BACKEND=redis`
+- `DATABASE_URL`
+- `REDIS_URL`
+- `GATEWAY_API_KEY`
+- `GATEWAY_SIGNING_SECRET`
+- `GATEWAY_ID`
+- `DASHBOARD_API_KEY`
+- `WEBHOOK_SECRET`
+
+### Edge Minimum
+
+- `STORE_BACKEND=sqlite`
+- `QUEUE_BACKEND=sqlite_spool`
+- `RATE_LIMIT_BACKEND=memory`
+- `SQLITE_PATH`
+- `GATEWAY_API_KEY`
+- `GATEWAY_SIGNING_SECRET`
+- `GATEWAY_ID`
+- `DASHBOARD_API_KEY`
+- `WEBHOOK_SECRET`
+
+### Edge with Central Replay
+
+Everything in the edge minimum, plus:
+
+- `UPLINK_INGEST_URL`
+- `UPLINK_API_KEY`
+- `UPLINK_SIGNING_SECRET`
+- `UPLINK_GATEWAY_ID`
+
+## 11A.13 Safety Rules
+
+- Do not reuse `GATEWAY_API_KEY` as `GATEWAY_SIGNING_SECRET`.
+- Do not reuse edge uplink secrets as the hardware gateway secrets unless you have intentionally chosen a shared trust domain and documented the blast radius.
+- Keep `SECRETS_BACKEND=env` for local development only.
+- Treat `.env.example` and `.env.edge.example` as templates, not production secret stores.
+- If you change `INCIDENTS_PUBSUB_CHANNEL` or `GSM_FALLBACK_CHANNEL`, update every producer and subscriber together.

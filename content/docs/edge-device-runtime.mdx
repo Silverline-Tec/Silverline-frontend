@@ -1,0 +1,285 @@
+---
+title: "10A. Edge Device Runtime"
+description: "SQLite-backed edge profile, merged sentinel-agent loop, local durability, and edge-to-central replay."
+section: "Edge"
+order: 11.5
+---
+
+# 10A. Edge Device Runtime
+
+This chapter describes the **edge backend profile** that runs beside local inference on a field appliance or edge box.
+
+It is intentionally separated from the central control-plane chapters so developers can work on edge behavior without tracing central PostgreSQL, Redis, Phoenix, or dashboard concerns through the rest of the platform.
+
+<Callout type="info" title="Scope Boundary">
+  This chapter is about the **software backend that runs on the edge host**. It does **not** describe camera firmware, on-device ML models, or LoRa routing internals.
+</Callout>
+
+## 10A.1 When to Use the Edge Profile
+
+Use the edge profile when the host must:
+
+- keep accepting events while backhaul is unstable
+- avoid the memory overhead of local PostgreSQL, Redis, and separate worker containers
+- run beside inference on a constrained machine
+- preserve a local incident trail even before the central control-plane is reachable
+
+Do **not** use the edge profile as the only long-term operator-facing platform if you need:
+
+- fleet-wide incident history
+- Phoenix realtime websockets
+- centralized operator workflows
+- cross-device analytics
+- one shared control-plane for many deployed sites
+
+## 10A.2 What Runs on the Edge
+
+| Component | Technology | Responsibility |
+|-----------|------------|----------------|
+| `api` | Python / FastAPI | Accepts signed `POST /ingest`, applies ingress controls, writes `logs`, and hands off accepted payloads to the local durable spool |
+| `sentinel-agent` | Python process | Merged processor, dispatcher, and recovery loop |
+| SQLite | Embedded DB file | Local incidents, logs, outbox, `recovery_queue`, `webhooks`, and `edge_spool` |
+
+What is intentionally **not** on the edge in the standard profile:
+
+- PostgreSQL
+- local Redis
+- Phoenix realtime
+- operator dashboard UI
+- central fleet aggregation
+
+## 10A.3 Why the Edge Runtime Is Split Out
+
+The edge runtime is a distinct module because it has different engineering pressures from the central stack:
+
+- memory pressure matters more
+- disk durability matters more than horizontal scaling
+- local crash recovery matters more than multi-tenant querying
+- intermittent backhaul is normal, not exceptional
+- the host shares CPU, RAM, and I/O with inference workloads
+
+That means edge developers can reason about:
+
+- SQLite behavior
+- spool claiming and leases
+- local outbox retries
+- uplink replay
+- reduced service count
+
+without accidentally coupling their work to Phoenix, RQ worker orchestration, or central PostgreSQL tuning.
+
+## 10A.4 Edge Data Path
+
+### Step 1 — Signed Ingest Arrives Locally
+
+The edge API accepts the same signed `POST /ingest` contract as the central API:
+
+- `X-API-Key`
+- `X-Gateway-ID`
+- `X-Gateway-Timestamp`
+- `X-Gateway-Signature`
+
+The request then passes through:
+
+- auth verification
+- node denylist checks
+- ingress rate limits
+- anomaly detection
+- circuit-breaker logic
+- canonical payload shaping
+
+### Step 2 — API Writes Durable Local Intake State
+
+For an accepted request, the edge API:
+
+1. touches `devices`
+2. inserts a `logs` row and captures `_log_id`
+3. writes the canonical payload into `edge_spool`
+4. returns `200 accepted`
+
+This keeps local intake durable even if the agent loop is temporarily down.
+
+### Step 3 — `sentinel-agent` Claims `edge_spool`
+
+The edge agent claims pending spool rows with a lease:
+
+- oldest rows first
+- status changes from `pending` → `processing`
+- `attempts` increments
+- stale leases are re-queued deterministically
+
+### Step 4 — Local Incident Processing
+
+The processor inside `sentinel-agent`:
+
+- rebuilds the dedup key
+- upserts the local `incidents` row in SQLite
+- updates the exact `logs` row by `_log_id`
+- stages outbox rows
+
+Just like the central worker:
+
+- operator-facing side effects are gated on `transmission_count == 1`
+- duplicate retransmissions update the incident and log row only
+
+### Step 5 — Local Outbox Work
+
+The edge agent dispatcher loop drains local `outbox` rows for:
+
+- `realtime`
+- `sms`
+- `webhook`
+- `uplink`
+
+Rules:
+
+- `realtime` is useful only if the edge node is intentionally configured to publish to a remote Redis
+- `sms` and `webhook` behave the same way as in the central stack
+- `uplink` replays accepted events into the central `POST /ingest` endpoint when configured
+
+### Step 6 — Recovery
+
+The recovery loop replays `recovery_queue` rows if something went wrong during enqueue or spool handoff.
+
+This means the edge profile has **two durability layers**:
+
+- `edge_spool` for the normal fast path
+- `recovery_queue` for last-resort recovery
+
+## 10A.5 Local SQLite Tables That Matter Most
+
+| Table | Purpose on Edge |
+|-------|-----------------|
+| `logs` | Every ingest attempt and downstream log-correlation anchor |
+| `devices` | Last-seen timestamps and review status |
+| `incidents` | Local incident history and dedup results |
+| `alerts` | Auditable SMS / webhook state |
+| `outbox` | Durable side-effect queue including `uplink` |
+| `recovery_queue` | Recovery fallback if enqueue / spool handoff fails |
+| `webhooks` | Local delivery registry if webhook delivery is enabled |
+| `edge_spool` | Durable accepted-event queue for the normal edge processing path |
+
+## 10A.6 `sentinel-agent` Internal Loops
+
+The edge profile merges three central services into one process:
+
+- worker
+- dispatcher
+- recovery
+
+Conceptually:
+
+```python
+while True:
+    requeue_stale_edge_spool_leases()
+    process_edge_spool_batch()
+    drain_outbox_once()
+    requeue_failed_outbox_rows()
+    recover_once()
+    sleep_if_idle()
+```
+
+Each loop must be written so that:
+
+- one failure does not permanently stop the others
+- claimed rows are retryable after restart
+- local incident state remains valid if the host reboots unexpectedly
+
+## 10A.7 Edge-to-Central Uplink
+
+If the deployment has a central control-plane, the edge node can replay accepted events upstream by configuring:
+
+- `UPLINK_INGEST_URL`
+- `UPLINK_API_KEY`
+- `UPLINK_SIGNING_SECRET`
+- `UPLINK_GATEWAY_ID`
+
+Important rule:
+
+- the edge node replays the **original flat ingest contract**
+- it does **not** replicate local incident rows upstream directly
+
+Why:
+
+- one external contract stays authoritative
+- central auth and logging stay uniform
+- central dedup logic remains the only source of truth for central incidents
+- edge and central can evolve independently without inventing a second upstream schema
+
+### Uplink Staging Rule
+
+Unlike operator-facing side effects, the `uplink` outbox row is staged for **every accepted event**, including duplicates.
+
+That is deliberate:
+
+- local dedup keeps the edge box correct for local use
+- central dedup must still see the full accepted ingest stream independently
+
+## 10A.8 Standard Edge Environment Shape
+
+The usual edge baseline is:
+
+```bash
+STORE_BACKEND=sqlite
+QUEUE_BACKEND=sqlite_spool
+RATE_LIMIT_BACKEND=memory
+SQLITE_PATH=/app/data/sentinel-edge.db
+```
+
+Optional uplink:
+
+```bash
+UPLINK_INGEST_URL=https://control-plane.example.com/ingest
+UPLINK_API_KEY=...
+UPLINK_SIGNING_SECRET=...
+UPLINK_GATEWAY_ID=edge-node-01
+```
+
+For the complete variable list, see [11A. Environment Reference](/docs/environment-reference).
+
+## 10A.9 Edge Ownership Boundaries for Developers
+
+### Edge Team Owns
+
+- SQLite schema and adapters used by the edge profile
+- `edge_spool` behavior
+- `sentinel-agent` loop behavior
+- local outbox retry behavior
+- edge Compose / runtime packaging
+- edge-to-central uplink replay
+
+### Central Platform Team Owns
+
+- PostgreSQL schema of the central control-plane
+- Redis-backed RQ orchestration
+- Phoenix realtime
+- dashboard APIs and operator workflows
+- central retention, multi-site analytics, and fleet aggregation
+
+### Shared Contract
+
+Both teams must coordinate on:
+
+- the signed `POST /ingest` contract
+- dedup rules
+- outbox payload shapes
+- alert-rule semantics
+- env var names and secret provisioning rules
+
+## 10A.10 Developer Checklist for Edge Changes
+
+When changing edge behavior, verify:
+
+1. accepted requests still produce durable local intake state before returning `200`
+2. `edge_spool` rows can be retried safely after process crash
+3. duplicate events do not create duplicate local operator-facing side effects
+4. `uplink` replay still uses the standard signed ingest contract
+5. the central stack remains optional for local correctness
+
+## 10A.11 Related Chapters
+
+- [2. System Architecture](/docs/architecture) for the full central vs edge topology split
+- [5. Ingestion API](/docs/ingestion-api) for canonical payload shaping and ingress controls
+- [7. Processing Worker](/docs/processing-worker) for shared incident-processing rules
+- [11. Deployment](/docs/deployment) for `docker-compose.edge.yml`
+- [11A. Environment Reference](/docs/environment-reference) for all edge env vars

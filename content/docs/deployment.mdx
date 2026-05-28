@@ -1,0 +1,240 @@
+---
+title: "11. Deployment"
+description: "Central and edge Docker Compose services, TLS bootstrap with Certbot, Nginx config, and environment variables."
+section: "Operations"
+order: 12
+---
+
+# 11. Deployment
+
+## 11.1 Infrastructure
+
+| Component | Central Control-Plane | Edge Profile |
+|-----------|-----------------------|--------------|
+| Host shape | VPS / cloud VM (example: Hetzner CX21, 2 vCPU, 4 GB RAM) | Inference appliance / field box |
+| Services | `api`, `worker`, `dispatcher`, `recovery`, `elixir`, `postgres`, `redis`, `nginx` | `api`, `agent` |
+| Local database | PostgreSQL 15 | SQLite file (`SQLITE_PATH`) |
+| Queue / pubsub | Redis 7 | SQLite `edge_spool`; optional remote Redis only if realtime relay is needed |
+| TLS | Nginx + Certbot | Optional; often upstream-controlled or omitted on private edge LANs |
+| Secrets | Local `.env` for development only. Production secrets come from Vault or AWS Secrets Manager and are injected at boot. | Same rule; edge nodes may additionally receive `UPLINK_*` secrets for replay to the central stack. |
+| Observability | Structured logs shipped to ELK/Datadog. Metrics scraped from API, worker, dispatcher, and realtime services. | Structured logs from API + `sentinel-agent`; metrics include local backlog and recovery state. |
+| Scale path | Managed PostgreSQL + Redis; multiple stateless app nodes when SLA requires. | Keep edge local state small; push operator surfaces and fleet aggregation to the central control-plane. |
+
+## 11.2 Central `docker-compose.yml` (Key Sections)
+
+```yaml
+services:
+  api:
+    build: .
+    restart: always
+    env_file: .env
+    ports: ['8000:8000']
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+
+  worker:
+    build: .
+    command: python worker.py
+    restart: always
+    env_file: .env
+
+  dispatcher:
+    build: .
+    command: python dispatcher.py
+    restart: always
+    env_file: .env
+
+  recovery:
+    build: .
+    command: python recovery.py
+    restart: always
+    env_file: .env
+
+  elixir:
+    build: ./sentinel-realtime
+    ports: ['4000:4000']
+    restart: always
+    env_file: .env
+
+  nginx:
+    image: nginx:alpine
+    ports: ['80:80', '443:443']
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - certbot_certs:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+
+volumes:
+  postgres_data:
+  redis_data:
+  certbot_certs:
+    name: sentinel_certbot_certs  # PINNED — certbot bootstrap uses same name
+  certbot_www:
+    name: sentinel_certbot_www    # PINNED
+```
+
+## 11.3 Edge `docker-compose.edge.yml` (Key Sections)
+
+```yaml
+services:
+  api:
+    build: .
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    restart: always
+    env_file: .env.edge
+    ports: ["8000:8000"]
+    volumes:
+      - edge_data:/app/data
+
+  agent:
+    build: .
+    command: ["python", "agent.py"]
+    restart: always
+    env_file: .env.edge
+    volumes:
+      - edge_data:/app/data
+    depends_on:
+      api: { condition: service_healthy }
+
+volumes:
+  edge_data:
+```
+
+The edge profile intentionally omits local PostgreSQL, local Redis, and Phoenix. It keeps local incidents, outbox rows, `recovery_queue`, and `edge_spool` in one SQLite file and optionally replays accepted events upstream through `UPLINK_INGEST_URL`.
+
+For the edge runtime internals themselves, see [10A. Edge Device Runtime](/docs/edge-device-runtime).
+
+## 11.4 Nginx Configuration
+
+```nginx
+# nginx.conf — DOMAIN_PLACEHOLDER is substituted by deploy.sh before startup
+# Nginx does NOT expand ${DOMAIN} at runtime — use the literal placeholder only
+
+server {
+  listen 80; server_name DOMAIN_PLACEHOLDER;
+  location /.well-known/acme-challenge/ { root /var/www/certbot; }
+  location / { return 301 https://$host$request_uri; }
+}
+
+server {
+  listen 443 ssl; server_name DOMAIN_PLACEHOLDER;
+  ssl_certificate     /etc/letsencrypt/live/DOMAIN_PLACEHOLDER/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/DOMAIN_PLACEHOLDER/privkey.pem;
+
+  location /ingest { proxy_pass http://api:8000; ... }  # gateway key only
+  location /api/   { proxy_pass http://api:8000; ... }  # dashboard key only
+
+  location /socket/ {                                    # Elixir WebSocket
+    proxy_pass http://elixir:4000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 86400;
+  }
+}
+```
+
+## 11.5 Deploy Script
+
+```bash
+#!/bin/bash  # scripts/deploy.sh
+set -e; source .env
+
+# Phase 1: Issue TLS cert — certbot standalone (no Nginx)
+docker run --rm -p 80:80 \
+  -v sentinel_certbot_certs:/etc/letsencrypt \
+  -v sentinel_certbot_www:/var/www/certbot \
+  certbot/certbot certonly --standalone \
+  --email ${CERTBOT_EMAIL} --agree-tos --no-eff-email -d ${DOMAIN}
+
+# Phase 2: Substitute domain into nginx.conf
+sed -i "s/DOMAIN_PLACEHOLDER/${DOMAIN}/g" nginx/nginx.conf
+
+# Phase 3: Start full control-plane
+docker compose up -d postgres redis api elixir
+
+# Phase 4: Run DB migrations
+docker compose exec api alembic upgrade head
+
+# Phase 5: Start worker services
+docker compose up -d worker dispatcher recovery
+
+echo "Done. Verify: docker compose ps"
+```
+
+### Edge Bring-Up
+
+```bash
+cp .env.edge.example .env.edge
+docker compose --env-file .env.edge -f docker-compose.edge.yml up -d --build
+```
+
+## 11.6 Environment Variables
+
+The table below is a **deployment summary only**. The canonical, exhaustive reference is [11A. Environment Reference](/docs/environment-reference).
+
+| Variable | Required By | Description |
+|----------|-------------|-------------|
+| `POSTGRES_DB` / `USER` / `PASSWORD` | Central PostgreSQL service and services that connect to it | Database credentials. |
+| `STORE_BACKEND` | `api`, worker services, `agent` | `postgres`, `memory`, or `sqlite`. |
+| `QUEUE_BACKEND` | `api`, `agent` | `redis_rq`, `memory`, or `sqlite_spool`. |
+| `RATE_LIMIT_BACKEND` | `api` | `redis` or `memory`. |
+| `DATABASE_URL` | Central `api`, `worker`, `dispatcher`, `realtime` backlog consumers | Full PostgreSQL connection string. |
+| `REDIS_URL` | Central `api`, `worker`, `dispatcher`, `recovery`, `elixir`; optional edge realtime relay | Redis connection string. |
+| `SQLITE_PATH` | Edge `api`, `agent` | Filesystem path for the edge SQLite database. |
+| `SQLITE_BUSY_TIMEOUT_MS` | Edge `api`, `agent` | SQLite contention timeout. |
+| `GATEWAY_API_KEY` | `api` | Authenticates gateway caller at `/ingest`. |
+| `GATEWAY_SIGNING_SECRET` | `api` + gateway | HMAC-SHA256 secret for the gateway → backend hop only. ≥ 32 random bytes. **Never reuse `GATEWAY_API_KEY` value.** |
+| `GATEWAY_ID` | gateway | Gateway node identifier. Included in canonical signature string. |
+| `SECRETS_BACKEND` | `api`, `gateway`, central workers, edge `agent` | `vault` or `aws_secrets_manager`. Selects secret source in production. |
+| `SECRETS_PREFIX` | `api`, `gateway`, central workers, edge `agent` | Path / namespace prefix for node keys, gateway keys, webhook secrets, and optional uplink secrets. |
+| `LOG_SINK_URL` | `api`, `worker`, `dispatcher`, edge `agent`, `gateway` | Centralized logging destination. |
+| `DASHBOARD_API_KEY` | `api` | Authenticates dashboard frontend at `/api/*`. |
+| `AT_USERNAME` / `AT_API_KEY` | `dispatcher`, edge `agent` | Africa's Talking credentials. |
+| `AT_SENDER_ID` | `dispatcher`, edge `agent` | Africa's Talking sender ID (e.g. `SENTINEL`). |
+| `ALERT_RECIPIENT_NUMBER` | `dispatcher`, edge `agent` | Primary SMS recipient. E164 format. |
+| `WEBHOOK_SECRET` | `dispatcher`, edge `agent` | Sent as `X-Webhook-Secret` on all webhook deliveries. |
+| `DASHBOARD_WEBHOOK_URL` | `api` startup | Internal dashboard webhook destination URL. |
+| `UPLINK_INGEST_URL` | Edge `agent` | Central `POST /ingest` endpoint used for eventual replay from edge to control-plane. |
+| `UPLINK_API_KEY` | Edge `agent` | API key used only for edge-to-central uplink requests. |
+| `UPLINK_SIGNING_SECRET` | Edge `agent` | Signing secret used only for edge-to-central uplink requests. ≥ 32 random bytes. |
+| `UPLINK_GATEWAY_ID` | Edge `agent` | Gateway identity presented by the edge uplink client to the central API. |
+| `UPLINK_TIMEOUT_SECONDS` | Edge `agent` | HTTP timeout for edge-to-central replay requests. |
+| `SECRET_KEY_BASE` | `elixir` | Phoenix secret key. Generate: `mix phx.gen.secret` |
+| `PHX_HOST` | `elixir` | Domain name for Phoenix endpoint. |
+| `DOMAIN` / `CERTBOT_EMAIL` | `deploy.sh`, nginx | Domain and Let's Encrypt registration email. |
+
+<Callout type="warning" title="Secret Management">
+  `.env` is a development convenience, not a production secret store. Production deployments must fetch node secrets, gateway secrets, and webhook secrets from Vault or AWS Secrets Manager. Rotate node keys quarterly and the gateway signing secret on compromise or gateway replacement. Generate a local `GATEWAY_SIGNING_SECRET` with:
+
+  ```bash
+  python -c "import secrets; print(secrets.token_hex(32))"
+  ```
+</Callout>
+
+## 11.7 Gateway Handoff (3 Values, Out-of-Band)
+
+| Variable | Value |
+|----------|-------|
+| `BACKEND_URL` | `https://yourdomain.com/ingest` |
+| `GATEWAY_API_KEY` | `<value from .env>` |
+| `GATEWAY_SIGNING_SECRET` | `<value from .env>` |
+| `GSM_FALLBACK_CHANNEL` | `alerts:gsm_fallback` |
+
+### Edge-to-Central Handoff
+
+If the edge profile is paired with a central control-plane, provision these additional values on the edge node:
+
+| Variable | Value |
+|----------|-------|
+| `UPLINK_INGEST_URL` | `https://control-plane.example.com/ingest` |
+| `UPLINK_API_KEY` | `<central API key reserved for this edge node>` |
+| `UPLINK_SIGNING_SECRET` | `<central signing secret reserved for this edge node>` |
+| `UPLINK_GATEWAY_ID` | `<stable edge node identity>` |
+
+## 11.8 Production Operations Requirements
+
+- Enable automated secret rotation jobs and store rotation audit logs centrally.
+- Ship gateway, API, worker, dispatcher, edge-agent, and Nginx logs to ELK or Datadog before any field deployment.
+- Run retention purge jobs for incidents, telemetry, and gateway MicroSD buffers on a fixed schedule.

@@ -1,0 +1,209 @@
+---
+title: "5. Ingestion API"
+description: "POST /ingest — authentication, ingress protection, log correlation, and queue/spool handoff."
+section: "API"
+order: 6
+---
+
+# 5. Ingestion API
+
+The API has ten responsibilities: **authenticate**, **enforce denylist**, **rate-limit**, **apply circuit-breaker protections**, **validate timestamps and schema**, **mark anomalous nodes for review**, **upsert device**, **write a log row** (capturing `_log_id`), **shape the canonical internal payload**, and **hand off that payload to the configured queue or spool**. All business logic — incident creation, deduplication, alerting — lives downstream in the processing worker or edge agent. **The API never writes an incident row.**
+
+The same signed `POST /ingest` contract is used by:
+
+- hardware gateways forwarding LoRa/mesh traffic
+- edge agents replaying accepted events upstream to the central control-plane
+
+## 5.1 Endpoint Contract
+
+| Property | Value |
+|----------|-------|
+| Method + Path | `POST /ingest` |
+| Auth | `X-API-Key` + `X-Gateway-Signature` |
+| Content-Type | `application/json` |
+| Success | `200 OK` — `{ "status": "accepted", "request_id": <int> }` |
+| Validation failure | `422 Unprocessable Entity` — `{ "detail": [...] }` |
+| Auth / revocation failure | `403 Forbidden` |
+| Rate-limited | `429 Too Many Requests` |
+| **Never returned** | `503` — queue/spool failure falls back to durable recovery storage, not a 503 |
+
+## 5.2 Pre-Route Gate Checks
+
+| Check | Rule | On Failure |
+|-------|------|------------|
+| Gateway auth | `X-API-Key`, `X-Gateway-Timestamp`, and `X-Gateway-Signature` must verify | `403` |
+| Node denylist | Reject revoked `node_id` | `403` |
+| Node circuit breaker | Reject nodes currently in manual-review cooldown | `429` |
+| Deployment circuit breaker | Reject traffic when the deployment breaker is active | `429` |
+| Per-node ingest rate | Max 45 packets/hour | `429` |
+| Deployment ingest rate | Max 1,000 packets/hour per deployment | `429` |
+
+### Non-Rejecting Protection Signals
+
+| Signal | Rule | Effect |
+|--------|------|--------|
+| Sudden node chatter | More than 10 packets/hour from a normally quiet node | Accept request, mark device `needs_review`, attach `operational_flags=["needs_review"]`, emit anomaly metrics |
+| Baseline breach | Node exceeds 200% of rolling hourly baseline | Trip node breaker and reject future requests during cool-down |
+
+## 5.3 Tiered Validation
+
+| Field | Rule | On Failure |
+|-------|------|------------|
+| `node_id` | Required. Non-empty. Normalised to lowercase. | **422 HARD REJECT** |
+| `event_type` | Required. Must match `EventType` enum (lowercase_snake). | **422 HARD REJECT** |
+| `confidence` | Required. Float 0.0–1.0 inclusive. | **422 HARD REJECT** |
+| `ts` | Optional. Unix epoch seconds. If present, must be no older than 24 h and no more than 1 h in the future. | Outside policy window → **422 HARD REJECT** |
+| `evidence_ref` | Optional. Stable device-generated clip/frame ID. | Accepted — stored as `null`. Dedup falls back to ts bucket. |
+| `priority` | Optional. Defaults to `low` if absent. Unknown value → 422. | Unknown → 422. Absent → `low`. |
+| `ack_req` | Optional. Boolean. Defaults to `false`. | Defaults to `false`. |
+
+## 5.4 Pydantic Models
+
+```python
+# models/ingest.py
+class EventType(str, Enum):
+    ASSAULT             = "assault"
+    PERIMETER_INTRUSION = "perimeter_intrusion"
+    FORCED_ENTRY        = "forced_entry"
+    TAMPER_DETECTED     = "tamper_detected"
+    MOTION_DETECTED     = "motion_detected"
+    PERSON_PRESENT      = "person_present"
+    # COORD: add new types here AND in gateway KNOWN_EVENT_TYPES simultaneously
+
+class Priority(str, Enum):
+    LOW = "low" | HIGH = "high" | CRITICAL = "critical"
+
+class EventPayload(BaseModel):
+    node_id:      str
+    event_type:   EventType            # HARD REJECT if unknown
+    confidence:   float                # HARD REJECT if out of 0.0-1.0
+    ts:           Optional[int]  = None
+    evidence_ref: Optional[str]  = None
+    priority:     Priority       = Priority.LOW
+    ack_req:      bool           = False
+
+    @validator("node_id")
+    def node_id_not_empty(cls, v):
+        if not v.strip(): raise ValueError("node_id cannot be empty")
+        return v.strip().lower()
+
+    @validator("confidence")
+    def confidence_range(cls, v):
+        if not 0.0 <= v <= 1.0: raise ValueError("confidence must be 0.0-1.0")
+        return v
+
+    @validator("ts")
+    def ts_within_policy_window(cls, v):
+        if v is None: return v
+        now = int(datetime.now(timezone.utc).timestamp())
+        if v < now - 86_400: raise ValueError("ts is older than 24h")
+        if v > now + 3_600:  raise ValueError("ts is more than 1h in the future")
+        return v
+```
+
+## 5.5 Exception Handlers (Full Logging Coverage)
+
+422, 403, and 429 errors never reach route code. FastAPI exception handlers capture them and write a `logs` row directly.
+
+```python
+@app.exception_handler(RequestValidationError)
+async def validation_handler(request: Request, exc: RequestValidationError):
+    try:    body = await request.json(); node_id = body.get("node_id", "unknown")
+    except: body, node_id = {}, "unknown"
+    await write_log_direct(
+        node_id=node_id, raw_payload=body,
+        outcome="invalid", failure_reason=str(exc.errors())
+    )
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code == 403:
+        detail = str(exc.detail).lower()
+        await write_log_direct(
+            node_id="unknown", raw_payload={},
+            outcome="revoked" if "revoked" in detail else "auth_failed",
+            failure_reason=str(exc.detail)
+        )
+    if exc.status_code == 429:
+        await write_log_direct(
+            node_id="unknown", raw_payload={},
+            outcome="rate_limited", failure_reason="Ingress rate limit exceeded"
+        )
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+```
+
+## 5.6 Canonical Internal Payload
+
+```python
+# The downstream processor always receives this exact shape — from Redis, edge_spool, or recovery_queue
+{
+    # Original fields (Pydantic-validated, gateway-flattened)
+    "node_id":         str,          # lowercase
+    "event_type":      str,          # lowercase_snake
+    "confidence":      float,        # 0.0 - 1.0
+    "ts":              int | None,
+    "evidence_ref":    str | None,
+    "priority":        str,          # "low" | "high" | "critical"
+    "ack_req":         bool,
+
+    # Pipeline fields added by API handler
+    "received_at_utc": str,          # ISO 8601 UTC
+    "event_time_utc":  str | None,   # ISO 8601 UTC — converted from ts
+    "clock_drift_ms":  int | None,   # (received_at - ts) * 1000
+    "time_source":     str,          # ftsp | leader_rebroadcast | local_rtc | unknown
+    "operational_flags": list[str],  # e.g. ["needs_review"]
+    "anomaly_context": {
+        "node_hour_count": int,
+        "lookback_count": int,
+        "baseline_hourly": float
+    } | None,
+    "_log_id":         int,          # logs.id — worker updates this row by PK
+}
+```
+
+## 5.7 Queue / Spool Handoff by Deployment Profile
+
+| Profile | Primary Handoff | Failure Fallback | Notes |
+|---------|-----------------|------------------|-------|
+| Central control-plane | Redis RQ queue (`QUEUE_BACKEND=redis_rq`) | `recovery_queue` row | Worker later dequeues from Redis and owns `incidents`. |
+| Edge profile | SQLite `edge_spool` (`QUEUE_BACKEND=sqlite_spool`) | `recovery_queue` row | `sentinel-agent` later claims the spool row and owns local `incidents`. |
+
+## 5.8 Ingest Handler
+
+```python
+@router.post("/ingest")
+async def ingest(payload: EventPayload):
+    data        = payload.dict()
+    received_at = datetime.now(timezone.utc)
+    event_time  = datetime.fromtimestamp(data["ts"], timezone.utc) if data.get("ts") else None
+
+    data["received_at_utc"] = received_at.isoformat()
+    data["event_time_utc"]  = event_time.isoformat() if event_time else None
+    data["clock_drift_ms"]  = int((received_at.timestamp()-data["ts"])*1000) if data.get("ts") else None
+    data["time_source"]     = "ftsp" if data.get("ts") else "unknown"
+
+    await database.execute(  # API is sole writer to devices
+        "INSERT INTO devices (node_id, last_seen_at) VALUES (:n, NOW())"
+        " ON CONFLICT (node_id) DO UPDATE SET last_seen_at = NOW()",
+        {"n": data["node_id"]}
+    )
+
+    log_id = await database.fetch_val(
+        "INSERT INTO logs (node_id, raw_payload, outcome, received_at_utc)"
+        " VALUES (:n, :p, 'received', NOW()) RETURNING id",
+        {"n": data["node_id"], "p": json.dumps(data)},
+    )
+    data["_log_id"] = log_id
+
+    try:
+        redis_conn.ping()
+        enqueue_incident(data)
+    except RedisError:
+        await database.execute(
+            "INSERT INTO recovery_queue (raw_payload) VALUES (:p)",
+            {"p": json.dumps(data)},
+        )
+
+    return {"status": "accepted", "request_id": log_id}
+```

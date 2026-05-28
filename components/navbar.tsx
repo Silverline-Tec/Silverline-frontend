@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Menu, X } from 'lucide-react';
+import { Menu, Shield, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 
@@ -43,7 +43,7 @@ export function Navbar() {
   const navItems = [
     { href: '/', label: 'Home' },
     { href: '/dashboard', label: 'Dashboard' },
-    { href: 'https://sentinel-software.vercel.app/docs', label: 'Docs', external: true },
+    { href: '/docs', label: 'Docs' },
   ];
 
   const isActive = (href: string) => pathname === href;
@@ -53,7 +53,7 @@ export function Navbar() {
       className={cn(
         'fixed left-0 right-0 top-0 z-50 transition-all duration-300',
         scrolled || isDashboard
-          ? 'border-b border-cyan-400/20 bg-[#050a1d]/85 shadow-[0_0_20px_rgba(0,212,255,0.1)] backdrop-blur-xl'
+          ? 'border-b border-white/[0.07] bg-[#0a0c0e]/90 backdrop-blur-md'
           : 'bg-transparent'
       )}
     >
@@ -69,18 +69,18 @@ export function Navbar() {
             href="/"
             className={cn(
               'group flex min-w-0 shrink-0 items-center gap-2 sm:gap-3',
-              isDashboard && 'md:h-full md:w-60 md:border-r md:border-cyan-400/15 md:px-4 lg:px-5'
+              isDashboard && 'md:h-full md:w-60 md:border-r md:border-white/[0.07] md:px-4 lg:px-5'
             )}
           >
-            <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded bg-cyan-400 transition-shadow group-hover:shadow-[0_0_15px_rgba(0,212,255,0.5)] sm:h-9 sm:w-9">
-              <div className="h-2 w-2 rounded-full bg-black" />
+            <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-brand-500/30 bg-brand-500/20 transition-colors group-hover:bg-brand-500/30 sm:h-9 sm:w-9">
+              <Shield className="h-4 w-4 text-brand-400" />
             </div>
             <div className="hidden min-w-0 leading-none min-[420px]:block">
-              <span className="hud-text block truncate text-sm font-bold text-cyan-300 sm:text-base">
+              <span className="font-display block truncate text-sm font-bold tracking-tight text-white sm:text-base">
                 SENTINEL
               </span>
-              <span className="hidden text-[0.62rem] font-mono tracking-[0.24em] text-cyan-300/60 sm:block">
-                OPS
+              <span className="hidden text-[0.62rem] font-mono uppercase tracking-[0.24em] text-zinc-500 sm:block">
+                AI
               </span>
             </div>
           </Link>
@@ -92,25 +92,23 @@ export function Navbar() {
               isDashboard ? 'justify-start px-2 xl:px-4' : 'justify-center'
             )}
           >
-            <div className="flex min-w-0 items-center gap-1 rounded-full border border-cyan-400/10 bg-cyan-400/[0.04] p-1 shadow-[inset_0_0_20px_rgba(0,212,255,0.04)]">
+            <div className="flex min-w-0 items-center gap-1 rounded-full border border-white/[0.07] bg-white/[0.02] p-1">
               {navItems.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
-                  target={item.external ? '_blank' : undefined}
-                  rel={item.external ? 'noreferrer' : undefined}
                   className={cn(
                     'relative rounded-full px-3 py-2 text-xs font-mono tracking-[0.2em] transition-all duration-300 xl:px-4 xl:text-sm',
-                    !item.external && isActive(item.href)
-                      ? 'bg-cyan-400/15 text-cyan-200 shadow-[0_0_18px_rgba(0,212,255,0.12)]'
-                      : 'text-gray-400 hover:bg-cyan-400/10 hover:text-cyan-300'
+                    isActive(item.href)
+                      ? 'bg-brand-500/10 text-brand-400'
+                      : 'text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-200'
                   )}
                 >
                   {item.label}
-                  {!item.external && isActive(item.href) && (
+                  {isActive(item.href) && (
                     <motion.div
                       layoutId="underline"
-                      className="absolute bottom-1 left-3 right-3 h-0.5 bg-gradient-to-r from-cyan-400 to-cyan-500"
+                      className="absolute bottom-1 left-3 right-3 h-0.5 bg-gradient-to-r from-brand-400 to-brand-600"
                     />
                   )}
                 </Link>
@@ -119,12 +117,12 @@ export function Navbar() {
           </div>
 
           {/* Status Badge */}
-          <div className="ml-auto hidden shrink-0 items-center gap-2 rounded border border-green-400/30 bg-green-950/20 px-2.5 py-1 sm:flex lg:ml-0 lg:mr-5 xl:px-3">
-            <div className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
-            <span className="hidden text-[0.68rem] font-mono tracking-[0.18em] text-green-300 xl:inline">
+          <div className="ml-auto hidden shrink-0 items-center gap-2 rounded-full border border-brand-500/20 bg-brand-500/5 px-2.5 py-1 sm:flex lg:ml-0 lg:mr-5 xl:px-3">
+            <div className="h-1.5 w-1.5 rounded-full bg-brand-400 animate-pulse" />
+            <span className="hidden text-[0.68rem] font-mono tracking-[0.18em] text-brand-400 xl:inline">
               SYSTEM ONLINE
             </span>
-            <span className="text-[0.68rem] font-mono tracking-[0.18em] text-green-300 xl:hidden">
+            <span className="text-[0.68rem] font-mono tracking-[0.18em] text-brand-400 xl:hidden">
               ONLINE
             </span>
           </div>
@@ -136,12 +134,12 @@ export function Navbar() {
             aria-expanded={mobileOpen}
             aria-controls="site-mobile-menu"
             aria-label={mobileOpen ? 'Close navigation menu' : 'Open navigation menu'}
-            className="shrink-0 rounded border border-cyan-400/20 p-2 transition-colors hover:bg-cyan-400/10 lg:hidden"
+            className="shrink-0 rounded-md border border-white/[0.07] p-2 text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-200 lg:hidden"
           >
             {mobileOpen ? (
-              <X className="h-5 w-5 text-cyan-400" />
+              <X className="h-5 w-5" />
             ) : (
-              <Menu className="h-5 w-5 text-cyan-400" />
+              <Menu className="h-5 w-5" />
             )}
           </button>
         </div>
@@ -155,20 +153,18 @@ export function Navbar() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
               transition={{ duration: 0.18, ease: 'easeOut' }}
-              className="max-h-[calc(100dvh-3.5rem)] overflow-y-auto border-t border-cyan-400/20 pb-4 pt-3 lg:hidden"
+              className="max-h-[calc(100dvh-3.5rem)] overflow-y-auto border-t border-white/[0.07] pb-4 pt-3 lg:hidden"
             >
-              <div className="grid gap-2 rounded-2xl border border-cyan-400/15 bg-black/65 p-2 shadow-[0_16px_60px_rgba(0,0,0,0.35)] backdrop-blur-xl sm:grid-cols-3">
+              <div className="grid gap-2 rounded-xl border border-white/[0.07] bg-[#0f1215]/95 p-2 shadow-[0_16px_60px_rgba(0,0,0,0.35)] backdrop-blur-xl sm:grid-cols-3">
                 {navItems.map((item) => (
                   <Link
                     key={item.href}
                     href={item.href}
-                    target={item.external ? '_blank' : undefined}
-                    rel={item.external ? 'noreferrer' : undefined}
                     className={cn(
                       'rounded-xl px-4 py-3 text-sm font-mono tracking-[0.18em] transition-colors',
-                      !item.external && isActive(item.href)
-                        ? 'bg-cyan-400/10 text-cyan-300'
-                        : 'text-gray-300 hover:bg-cyan-400/10 hover:text-cyan-300'
+                      isActive(item.href)
+                        ? 'bg-brand-500/10 text-brand-400'
+                        : 'text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200'
                     )}
                     onClick={() => setMobileOpen(false)}
                   >

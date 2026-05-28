@@ -1,0 +1,84 @@
+---
+title: "Frontend Overview"
+description: "Silverline frontend scope, repositories, runtime responsibilities, and how it connects to Sentinel central."
+section: "Frontend"
+order: 1
+---
+
+# Frontend Overview
+
+<Callout type="info">
+  This frontend documentation covers the `silverline-frontend` app. The backend documentation remains available from the **Backend** switch in the left sidebar.
+</Callout>
+
+## Purpose
+
+The frontend is the operator-facing Sentinel dashboard. It does not replace the backend control-plane. It presents backend data in a clear, live interface for reviewing alerts, field devices, incident history, and system health.
+
+The current frontend app lives at:
+
+```txt
+/home/swaynel/Documents/projects/sentinel/silverline-frontend
+```
+
+## What It Owns
+
+| Area | Frontend responsibility |
+|------|-------------------------|
+| Operator dashboard | Shows open alerts, field devices, incident history, and system health |
+| API proxy | Keeps the dashboard API key server-side while the browser talks to local Next.js routes |
+| Live updates | Connects to the Phoenix realtime service and prepends new incidents as they arrive |
+| Incident actions | Allows operators to acknowledge or close incidents through backend status endpoints |
+| Presentation | Uses the Sentinel docs visual language: dark surfaces, zinc borders, brand green accents, restrained panels |
+
+## What It Does Not Own
+
+| Area | Owner |
+|------|-------|
+| Incident ingestion | Sentinel backend |
+| Deduplication and processing | Sentinel backend workers |
+| Authoritative data storage | Sentinel central backend |
+| Realtime publication | Elixir/Phoenix service inside `sentinel-backend/sentinel-realtime` |
+| SMS and webhook delivery | Sentinel central backend |
+
+## Runtime Shape
+
+The browser does not call Sentinel central directly with secrets. The flow is:
+
+```txt
+Browser
+  -> silverline-frontend Next.js API routes
+  -> Sentinel central REST API
+
+Browser
+  -> Phoenix WebSocket /socket
+  -> Sentinel realtime service
+```
+
+The frontend can keep working with REST polling if realtime is disconnected. WebSocket events improve freshness; REST responses remain the source of correction.
+
+## Main Pages
+
+| Route | Purpose |
+|-------|---------|
+| `/` | Product landing page for Silverline Sentinel |
+| `/dashboard` | Single-page operator dashboard with dynamic in-page views |
+| `/api/control/*` | Server-side proxy routes to Sentinel central |
+
+## Where To Start
+
+<Steps>
+  <Step title="Read the frontend architecture">
+    Start with [Frontend Architecture](/docs/frontend-architecture) to understand the Next.js app boundaries.
+  </Step>
+  <Step title="Understand the dashboard">
+    Read [Operations Dashboard](/docs/frontend-dashboard) for the UI layout, state model, and user interactions.
+  </Step>
+  <Step title="Wire realtime correctly">
+    Read [Realtime Integration](/docs/frontend-realtime) before changing WebSocket behavior.
+  </Step>
+  <Step title="Set environment variables">
+    Read [Frontend Environment](/docs/frontend-environment) before running locally or deploying.
+  </Step>
+</Steps>
+

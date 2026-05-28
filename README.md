@@ -6,9 +6,10 @@ Silverline's tactical command-center UI is now the Sentinel product frontend. Th
 
 - `/` renders the Silverline landing page.
 - `/dashboard` renders the live tactical dashboard.
+- `/docs` renders the Sentinel backend and frontend documentation from this codebase.
 - `/api/control/*` proxies dashboard-safe calls to `sentinel-backend`.
 - The browser calls this frontend only; `SENTINEL_DASHBOARD_API_KEY` stays server-side.
-- Platform docs remain available at `https://sentinel-software.vercel.app/docs`.
+- Documentation is no longer a separate deployment target for day-to-day use; keep new frontend/backend docs in `content/docs`.
 
 ## Required Backend
 
@@ -43,6 +44,7 @@ Open:
 
 - `http://localhost:3000`
 - `http://localhost:3000/dashboard`
+- `http://localhost:3000/docs`
 
 ## Important Notes
 
