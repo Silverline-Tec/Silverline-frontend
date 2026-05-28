@@ -23,6 +23,9 @@ importers:
       next:
         specifier: 16.2.6
         version: 16.2.6(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      phoenix:
+        specifier: ^1.8.7
+        version: 1.8.7
       react:
         specifier: ^19
         version: 19.2.4
@@ -583,6 +586,9 @@ packages:
       sass:
         optional: true
 
+  phoenix@1.8.7:
+    resolution: {integrity: sha512-mQfiO4PNEjToj5iUfka6OjRWtCNe+0JsVrW6x+q94kPN8VX8taulJPTa4/u2ZPb2b8+hzmBAvMxQWnuTc0T4KQ==}
+
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
 
@@ -1015,6 +1021,8 @@ snapshots:
     transitivePeerDependencies:
       - '@babel/core'
       - babel-plugin-macros
+
+  phoenix@1.8.7: {}
 
   picocolors@1.1.1: {}
 
