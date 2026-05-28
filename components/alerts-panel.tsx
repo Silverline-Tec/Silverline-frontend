@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { X, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { EmergencyAlert } from './emergency-alert';
+import type { IncidentSummary } from '@/lib/control-types';
 
 interface Alert {
   id: string;
@@ -16,15 +17,15 @@ interface Alert {
 const initialAlerts: Alert[] = [
   {
     id: '1',
-    title: 'Officer Needs Assistance',
-    description: 'Unit 12 - Officer Johnson requesting backup at 5th & Main',
+    title: 'Critical Incident Detected',
+    description: 'edge-node-12 replayed a high-confidence incident at North Gate',
     level: 'high',
     timestamp: new Date(Date.now() - 2 * 60000).toLocaleTimeString(),
   },
   {
     id: '2',
     title: 'Low Battery Alert',
-    description: 'Unit 9 - Officer Chen body camera battery at 35%',
+    description: 'edge-node-09 battery is below operating threshold',
     level: 'medium',
     timestamp: new Date(Date.now() - 5 * 60000).toLocaleTimeString(),
   },
@@ -37,15 +38,39 @@ const initialAlerts: Alert[] = [
   },
 ];
 
-export function AlertsPanel() {
-  const [alerts, setAlerts] = useState<Alert[]>(initialAlerts);
+interface AlertsPanelProps {
+  incidents?: IncidentSummary[];
+  loading?: boolean;
+}
+
+export function AlertsPanel({ incidents, loading = false }: AlertsPanelProps) {
+  const [fallbackAlerts, setFallbackAlerts] = useState<Alert[]>(initialAlerts);
+  const [dismissedIncidentIds, setDismissedIncidentIds] = useState<Set<number>>(new Set());
+
+  const alerts =
+    incidents == null
+      ? fallbackAlerts
+      : incidents
+          .filter((incident) => !dismissedIncidentIds.has(incident.incidentId))
+          .slice(0, 8)
+          .map(mapIncidentToAlert);
 
   const handleDismiss = (id: string) => {
-    setAlerts(alerts.filter((alert) => alert.id !== id));
+    if (incidents == null) {
+      setFallbackAlerts(fallbackAlerts.filter((alert) => alert.id !== id));
+      return;
+    }
+
+    setDismissedIncidentIds((current) => new Set(current).add(Number(id)));
   };
 
   const handleDismissAll = () => {
-    setAlerts([]);
+    if (incidents == null) {
+      setFallbackAlerts([]);
+      return;
+    }
+
+    setDismissedIncidentIds(new Set(incidents.map((incident) => incident.incidentId)));
   };
 
   return (
@@ -56,7 +81,11 @@ export function AlertsPanel() {
             <Zap className="w-6 h-6 text-red-400" />
             Active Alerts
           </h2>
-          <p className="text-gray-400 text-sm">{alerts.length} alert{alerts.length !== 1 ? 's' : ''} requiring attention</p>
+          <p className="text-gray-400 text-sm">
+            {loading && alerts.length === 0
+              ? 'Pulling central incident queue'
+              : `${alerts.length} alert${alerts.length !== 1 ? 's' : ''} requiring attention`}
+          </p>
         </div>
         {alerts.length > 0 && (
           <button
@@ -107,4 +136,43 @@ export function AlertsPanel() {
       </AnimatePresence>
     </div>
   );
+}
+
+function mapIncidentToAlert(incident: IncidentSummary): Alert {
+  return {
+    id: String(incident.incidentId),
+    title: titleCase(incident.eventType),
+    description: `${incident.locationLabel ?? 'unknown site'} - ${incident.nodeId ?? 'unassigned node'} - ${(incident.confidence * 100).toFixed(0)}% confidence`,
+    level:
+      incident.priority === 'critical'
+        ? 'high'
+        : incident.priority === 'high'
+          ? 'medium'
+          : 'low',
+    timestamp: formatRelativeTime(incident.receivedAtUtc),
+  };
+}
+
+function titleCase(value: string) {
+  return value.replaceAll('_', ' ');
+}
+
+function formatRelativeTime(value: string) {
+  const diffMs = Date.now() - new Date(value).getTime();
+  const diffMinutes = Math.max(0, Math.round(diffMs / 60_000));
+
+  if (diffMinutes < 1) {
+    return 'just now';
+  }
+
+  if (diffMinutes < 60) {
+    return `${diffMinutes}m ago`;
+  }
+
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `${diffHours}h ago`;
+  }
+
+  return `${Math.round(diffHours / 24)}d ago`;
 }

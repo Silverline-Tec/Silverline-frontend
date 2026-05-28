@@ -4,8 +4,9 @@ import React from 'react';
 import { MapPin, Grid3x3 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { TacticalCard } from './tactical-card';
+import type { DeviceSummary } from '@/lib/control-types';
 
-interface Officer {
+interface NodeMarker {
   id: string;
   name: string;
   unit: string;
@@ -14,16 +15,24 @@ interface Officer {
   status: 'active' | 'inactive';
 }
 
-const mockOfficers: Officer[] = [
-  { id: '1', name: 'Johnson', unit: 'Unit 12', x: 35, y: 45, status: 'active' },
-  { id: '2', name: 'Martinez', unit: 'Unit 7', x: 62, y: 28, status: 'active' },
-  { id: '3', name: 'Williams', unit: 'Unit 15', x: 78, y: 65, status: 'active' },
-  { id: '4', name: 'Chen', unit: 'Unit 9', x: 48, y: 72, status: 'active' },
-  { id: '5', name: 'Davis', unit: 'Unit 3', x: 25, y: 82, status: 'active' },
-  { id: '6', name: 'Thompson', unit: 'Unit 21', x: 85, y: 38, status: 'inactive' },
+const mockNodes: NodeMarker[] = [
+  { id: '1', name: 'North Gate', unit: 'node-12', x: 35, y: 45, status: 'active' },
+  { id: '2', name: 'Downtown', unit: 'node-07', x: 62, y: 28, status: 'active' },
+  { id: '3', name: 'Harbor', unit: 'node-15', x: 78, y: 65, status: 'active' },
+  { id: '4', name: 'Industrial', unit: 'node-09', x: 48, y: 72, status: 'active' },
+  { id: '5', name: 'Residential', unit: 'node-03', x: 25, y: 82, status: 'active' },
+  { id: '6', name: 'Commercial', unit: 'node-21', x: 85, y: 38, status: 'inactive' },
 ];
 
-export function TacticalMap() {
+interface TacticalMapProps {
+  devices?: DeviceSummary[];
+  loading?: boolean;
+}
+
+export function TacticalMap({ devices, loading = false }: TacticalMapProps) {
+  const nodes = devices == null ? mockNodes : devices.slice(0, 18).map(mapDeviceToNodeMarker);
+  const activeCount = nodes.filter((node) => node.status === 'active').length;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -32,11 +41,15 @@ export function TacticalMap() {
             <MapPin className="w-6 h-6" />
             Tactical Map
           </h2>
-          <p className="text-gray-400 text-sm">Real-time officer positions</p>
+          <p className="text-gray-400 text-sm">
+            {loading && nodes.length === 0
+              ? 'Pulling field-node positions'
+              : 'Derived field-node positions from central state'}
+          </p>
         </div>
         <div className="flex items-center gap-2 px-3 py-1 rounded border border-cyan-400/30 bg-cyan-400/5">
           <Grid3x3 className="w-4 h-4 text-cyan-400" />
-          <span className="text-xs text-cyan-300 font-mono">{mockOfficers.filter(o => o.status === 'active').length} ACTIVE</span>
+          <span className="text-xs text-cyan-300 font-mono">{activeCount} ACTIVE</span>
         </div>
       </div>
 
@@ -54,23 +67,23 @@ export function TacticalMap() {
             <div className="text-xs font-mono text-cyan-400">N</div>
           </div>
 
-          {/* Officers markers */}
-          {mockOfficers.map((officer) => (
+          {/* Node markers */}
+          {nodes.map((node) => (
             <motion.div
-              key={officer.id}
+              key={node.id}
               initial={{ scale: 0, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              transition={{ delay: 0.05 * parseInt(officer.id), duration: 0.4 }}
+              transition={{ delay: 0.03 * getMarkerDelay(node.id), duration: 0.4 }}
               className="absolute transform -translate-x-1/2 -translate-y-1/2"
-              style={{ left: `${officer.x}%`, top: `${officer.y}%` }}
+              style={{ left: `${node.x}%`, top: `${node.y}%` }}
             >
               <div className={`relative w-6 h-6 rounded-full flex items-center justify-center ${
-                officer.status === 'active'
+                node.status === 'active'
                   ? 'bg-green-500/20 border border-green-400 shadow-[0_0_10px_rgba(0,255,136,0.4)]'
                   : 'bg-gray-500/20 border border-gray-400 shadow-[0_0_10px_rgba(100,116,139,0.2)]'
               }`}>
                 <div className={`w-2 h-2 rounded-full ${
-                  officer.status === 'active' ? 'bg-green-400' : 'bg-gray-400'
+                  node.status === 'active' ? 'bg-green-400' : 'bg-gray-400'
                 }`} />
 
                 {/* Hover tooltip */}
@@ -80,7 +93,7 @@ export function TacticalMap() {
                   className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 pointer-events-none"
                 >
                   <div className="bg-black/80 border border-cyan-400/50 rounded px-2 py-1 text-xs text-cyan-300 font-mono whitespace-nowrap">
-                    {officer.unit} - {officer.name}
+                    {node.unit} - {node.name}
                   </div>
                 </motion.div>
               </div>
@@ -98,7 +111,7 @@ export function TacticalMap() {
         <div className="mt-4 grid grid-cols-2 gap-4 pt-4 border-t border-cyan-400/20">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-green-400 shadow-[0_0_8px_rgba(0,255,136,0.5)]" />
-            <span className="text-xs text-gray-400">Active Officer</span>
+            <span className="text-xs text-gray-400">Active Node</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-gray-400" />
@@ -108,4 +121,38 @@ export function TacticalMap() {
       </TacticalCard>
     </div>
   );
+}
+
+function mapDeviceToNodeMarker(device: DeviceSummary): NodeMarker {
+  const point = getGridPoint(device.nodeId);
+
+  return {
+    id: device.nodeId,
+    name: device.name ?? device.nodeId,
+    unit: device.nodeId,
+    x: point.x,
+    y: point.y,
+    status: device.status === 'active' && !device.isStale ? 'active' : 'inactive',
+  };
+}
+
+function getGridPoint(seed: string) {
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) % 9973;
+  }
+
+  return {
+    x: 12 + (hash % 76),
+    y: 12 + ((hash * 17) % 76),
+  };
+}
+
+function getMarkerDelay(seed: string) {
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash + seed.charCodeAt(index)) % 12;
+  }
+
+  return hash;
 }

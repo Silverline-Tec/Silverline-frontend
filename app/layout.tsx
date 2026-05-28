@@ -7,9 +7,9 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'Police Body Camera System - Real-Time Emergency Response',
-  description: 'Advanced body camera management system with real-time emergency alerts, live streaming, and tactical dispatch integration for law enforcement agencies.',
-  generator: 'v0.app',
+  title: 'Silverline Sentinel - Tactical Command Center',
+  description: 'Sentinel central dashboard for live incidents, field nodes, replay pressure, and operator response workflows.',
+  generator: 'Silverline Sentinel',
   icons: {
     icon: [
       {

@@ -3,10 +3,11 @@
 import React from 'react';
 import { ArrowRight, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
+import type { Variants } from 'framer-motion';
 import Link from 'next/link';
 
 export function HeroSection() {
-  const containerVariants = {
+  const containerVariants: Variants = {
     hidden: { opacity: 0 },
     visible: {
       opacity: 1,
@@ -17,7 +18,7 @@ export function HeroSection() {
     },
   };
 
-  const itemVariants = {
+  const itemVariants: Variants = {
     hidden: { opacity: 0, y: 20 },
     visible: {
       opacity: 1,
@@ -52,36 +53,34 @@ export function HeroSection() {
         {/* Main heading */}
         <motion.h1 variants={itemVariants} className="text-4xl sm:text-5xl md:text-7xl font-bold mb-6 leading-tight text-balance">
           <span className="bg-gradient-to-r from-cyan-300 via-cyan-400 to-cyan-300 bg-clip-text text-transparent">
-            Police Body Camera
+            Sentinel AI
           </span>
           <br />
-          <span className="text-cyan-100">Emergency Response System</span>
+          <span className="text-cyan-100">Tactical Response Platform</span>
         </motion.h1>
 
         {/* Subheading */}
         <motion.p variants={itemVariants} className="text-lg md:text-xl text-gray-400 mb-8 max-w-2xl mx-auto leading-relaxed">
-          Real-time monitoring, emergency alerts, and tactical dispatch integration for modern law enforcement operations
+          Real-time incident monitoring, edge-to-central replay visibility, and tactical dispatch workflows for resilient field operations
         </motion.p>
 
         {/* CTA Buttons */}
         <motion.div variants={itemVariants} className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-          <Link href="/dashboard">
-            <motion.button
-              whileHover={{ scale: 1.05, boxShadow: '0 0 30px rgba(0, 212, 255, 0.5)' }}
-              whileTap={{ scale: 0.95 }}
-              className="px-8 py-3 bg-cyan-400 text-black font-bold rounded flex items-center gap-2 hover:bg-cyan-300 transition-colors shadow-[0_0_20px_rgba(0,212,255,0.3)]"
-            >
-              Enter Dashboard
-              <ArrowRight className="w-5 h-5" />
-            </motion.button>
+          <Link
+            href="/dashboard"
+            className="px-8 py-3 bg-cyan-400 text-black font-bold rounded flex items-center gap-2 hover:bg-cyan-300 transition-colors shadow-[0_0_20px_rgba(0,212,255,0.3)] hover:shadow-[0_0_30px_rgba(0,212,255,0.5)]"
+          >
+            Enter Dashboard
+            <ArrowRight className="w-5 h-5" />
           </Link>
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
+          <Link
+            href="https://sentinel-software.vercel.app/docs"
+            target="_blank"
+            rel="noreferrer"
             className="px-8 py-3 border border-cyan-400/50 text-cyan-300 font-bold rounded hover:bg-cyan-400/10 transition-colors"
           >
-            Learn More
-          </motion.button>
+            Platform Docs
+          </Link>
         </motion.div>
 
         {/* Live status widget */}
@@ -90,9 +89,9 @@ export function HeroSection() {
           className="mt-16 grid grid-cols-3 gap-4 max-w-lg mx-auto"
         >
           {[
-            { label: 'Officers Online', value: '1,247' },
-            { label: 'Cameras Active', value: '1,247' },
-            { label: 'Alerts Today', value: '24' },
+            { label: 'Edge Nodes', value: 'LIVE' },
+            { label: 'Central Sync', value: 'ON' },
+            { label: 'Replay Safe', value: 'YES' },
           ].map((stat, index) => (
             <motion.div
               key={index}

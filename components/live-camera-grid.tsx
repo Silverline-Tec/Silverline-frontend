@@ -6,10 +6,11 @@ import { motion } from 'framer-motion';
 import { TacticalCard } from './tactical-card';
 import { StatusIndicator } from './status-indicator';
 import { cn } from '@/lib/utils';
+import type { DeviceSummary } from '@/lib/control-types';
 
 interface CameraFeed {
   id: string;
-  officer: string;
+  label: string;
   unit: string;
   location: string;
   status: 'active' | 'inactive' | 'warning';
@@ -17,17 +18,23 @@ interface CameraFeed {
 }
 
 const mockCameras: CameraFeed[] = [
-  { id: '1', officer: 'Officer Johnson', unit: 'Unit 12', location: '5th & Main', status: 'active', batteryLevel: 85 },
-  { id: '2', officer: 'Officer Martinez', unit: 'Unit 7', location: 'Downtown', status: 'active', batteryLevel: 92 },
-  { id: '3', officer: 'Officer Williams', unit: 'Unit 15', location: 'Harbor District', status: 'active', batteryLevel: 72 },
-  { id: '4', officer: 'Officer Chen', unit: 'Unit 9', location: 'Industrial Area', status: 'warning', batteryLevel: 35 },
-  { id: '5', officer: 'Officer Davis', unit: 'Unit 3', location: 'Residential', status: 'active', batteryLevel: 88 },
-  { id: '6', officer: 'Officer Thompson', unit: 'Unit 21', location: 'Commercial', status: 'inactive', batteryLevel: 0 },
+  { id: '1', label: 'Edge Node 12', unit: 'node-12', location: 'North Gate', status: 'active', batteryLevel: 85 },
+  { id: '2', label: 'Edge Node 7', unit: 'node-07', location: 'Downtown', status: 'active', batteryLevel: 92 },
+  { id: '3', label: 'Edge Node 15', unit: 'node-15', location: 'Harbor District', status: 'active', batteryLevel: 72 },
+  { id: '4', label: 'Edge Node 9', unit: 'node-09', location: 'Industrial Area', status: 'warning', batteryLevel: 35 },
+  { id: '5', label: 'Edge Node 3', unit: 'node-03', location: 'Residential', status: 'active', batteryLevel: 88 },
+  { id: '6', label: 'Edge Node 21', unit: 'node-21', location: 'Commercial', status: 'inactive', batteryLevel: 0 },
 ];
 
-export function LiveCameraGrid() {
+interface LiveCameraGridProps {
+  devices?: DeviceSummary[];
+  loading?: boolean;
+}
+
+export function LiveCameraGrid({ devices, loading = false }: LiveCameraGridProps) {
   const [muted, setMuted] = useState<Set<string>>(new Set());
   const [fullscreen, setFullscreen] = useState<string | null>(null);
+  const cameraFeeds = devices == null ? mockCameras : devices.slice(0, 12).map(mapDeviceToCamera);
 
   const toggleMute = (id: string) => {
     const newMuted = new Set(muted);
@@ -65,12 +72,16 @@ export function LiveCameraGrid() {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-2xl font-bold text-cyan-300 mb-2">Live Camera Feed</h2>
-        <p className="text-gray-400 text-sm">Real-time monitoring of active officers</p>
+        <h2 className="text-2xl font-bold text-cyan-300 mb-2">Live Field Feeds</h2>
+        <p className="text-gray-400 text-sm">
+          {loading && cameraFeeds.length === 0
+            ? 'Pulling field-node state from Sentinel central'
+            : 'Real-time monitoring of connected field nodes'}
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {mockCameras.map((camera) => (
+        {cameraFeeds.length > 0 ? cameraFeeds.map((camera) => (
           <motion.div
             key={camera.id}
             whileHover={{ y: -4 }}
@@ -84,7 +95,7 @@ export function LiveCameraGrid() {
               <div className="relative bg-black aspect-video rounded mb-3 overflow-hidden group">
                 <div className="absolute inset-0 flex items-center justify-center text-gray-500">
                   <div className="text-center">
-                    <div className="text-sm font-mono mb-2">FEED STREAM</div>
+                    <div className="text-sm font-mono mb-2">STREAM ENDPOINT PENDING</div>
                     <div className="w-16 h-16 border-2 border-cyan-400/30 rounded mx-auto" />
                   </div>
                 </div>
@@ -121,7 +132,7 @@ export function LiveCameraGrid() {
               {/* Camera info */}
               <div className="space-y-2">
                 <div>
-                  <div className="text-sm font-bold text-cyan-300">{camera.officer}</div>
+                  <div className="text-sm font-bold text-cyan-300">{camera.label}</div>
                   <div className="text-xs text-gray-400">{camera.unit}</div>
                 </div>
 
@@ -154,8 +165,33 @@ export function LiveCameraGrid() {
               </div>
             </TacticalCard>
           </motion.div>
-        ))}
+        )) : (
+          <div className="md:col-span-2 lg:col-span-3">
+            <TacticalCard glow="cyan">
+              <p className="text-sm text-gray-400">
+                No field nodes are visible from the central backend yet.
+              </p>
+            </TacticalCard>
+          </div>
+        )}
       </div>
     </div>
   );
+}
+
+function mapDeviceToCamera(device: DeviceSummary): CameraFeed {
+  return {
+    id: device.nodeId,
+    label: device.name ?? device.nodeId,
+    unit: device.nodeId,
+    location: device.locationLabel ?? 'unknown site',
+    status: device.isStale
+      ? 'warning'
+      : device.status === 'active'
+        ? 'active'
+        : device.status === 'maintenance'
+          ? 'inactive'
+          : 'warning',
+    batteryLevel: device.batteryLevel ?? 0,
+  };
 }

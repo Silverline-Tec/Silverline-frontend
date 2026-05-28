@@ -24,6 +24,7 @@ export function Navbar() {
   const navItems = [
     { href: '/', label: 'Home' },
     { href: '/dashboard', label: 'Dashboard' },
+    { href: 'https://sentinel-software.vercel.app/docs', label: 'Docs', external: true },
   ];
 
   const isActive = (href: string) => pathname === href;
@@ -44,7 +45,7 @@ export function Navbar() {
             <div className="w-8 h-8 bg-cyan-400 rounded flex items-center justify-center relative group-hover:shadow-[0_0_15px_rgba(0,212,255,0.5)] transition-shadow">
               <div className="w-2 h-2 bg-black rounded-full" />
             </div>
-            <span className="font-bold text-cyan-300 hidden sm:inline hud-text">BODYCAM SYSTEM</span>
+            <span className="font-bold text-cyan-300 hidden sm:inline hud-text">SENTINEL OPS</span>
           </Link>
 
           {/* Desktop Navigation */}
@@ -53,15 +54,17 @@ export function Navbar() {
               <Link
                 key={item.href}
                 href={item.href}
+                target={item.external ? '_blank' : undefined}
+                rel={item.external ? 'noreferrer' : undefined}
                 className={cn(
                   'text-sm font-mono tracking-wider transition-all duration-300 relative pb-2',
-                  isActive(item.href)
+                  !item.external && isActive(item.href)
                     ? 'text-cyan-300'
                     : 'text-gray-400 hover:text-cyan-300'
                 )}
               >
                 {item.label}
-                {isActive(item.href) && (
+                {!item.external && isActive(item.href) && (
                   <motion.div
                     layoutId="underline"
                     className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-cyan-400 to-cyan-500"
@@ -102,9 +105,11 @@ export function Navbar() {
               <Link
                 key={item.href}
                 href={item.href}
+                target={item.external ? '_blank' : undefined}
+                rel={item.external ? 'noreferrer' : undefined}
                 className={cn(
                   'block px-4 py-2 text-sm font-mono transition-colors',
-                  isActive(item.href)
+                  !item.external && isActive(item.href)
                     ? 'text-cyan-300 bg-cyan-400/10'
                     : 'text-gray-400 hover:text-cyan-300'
                 )}

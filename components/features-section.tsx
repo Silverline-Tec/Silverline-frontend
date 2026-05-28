@@ -17,43 +17,43 @@ import { TacticalCard } from './tactical-card';
 const features = [
   {
     icon: Camera,
-    title: 'Live Camera Feed',
-    description: 'Real-time multi-camera monitoring with 4K resolution and low-latency streaming',
+    title: 'Field Node Feeds',
+    description: 'Live node health, stream placeholders, battery state, and central visibility',
   },
   {
     icon: AlertCircle,
-    title: 'Emergency Alerts',
-    description: 'Instant notifications for critical incidents with automatic escalation protocols',
+    title: 'Incident Alerts',
+    description: 'Critical incident queue backed by Sentinel central alerting and deduplication',
   },
   {
     icon: MapPin,
-    title: 'GPS Tracking',
-    description: 'Real-time location tracking and tactical dispatch integration for rapid response',
+    title: 'Tactical Positioning',
+    description: 'Derived field-node grid until backend GPS coordinates are available',
   },
   {
     icon: BarChart3,
-    title: 'Analytics Dashboard',
-    description: 'Comprehensive incident analytics and performance metrics for departments',
+    title: 'Control Analytics',
+    description: 'Incident totals, stale nodes, replay pressure, and recovery backlog metrics',
   },
   {
     icon: Lock,
-    title: 'Secure Storage',
-    description: 'End-to-end encrypted cloud storage with chain-of-custody compliance',
+    title: 'Safe API Proxy',
+    description: 'Dashboard API keys stay server-side through Next.js control routes',
   },
   {
     icon: Radio,
-    title: 'Audio Monitoring',
-    description: 'Clear audio capture with noise cancellation and radio integration',
+    title: 'Edge Replay',
+    description: 'Visibility into central recovery pressure when edge nodes reconnect',
   },
   {
     icon: Zap,
-    title: 'Quick Response',
-    description: 'Sub-second alert delivery and automated incident documentation',
+    title: 'Operator Response',
+    description: 'Acknowledge and close incidents through the central backend workflow',
   },
   {
     icon: Users,
-    title: 'Multi-User Access',
-    description: 'Role-based access control for dispatch, commanders, and supervisors',
+    title: 'Fleet Overview',
+    description: 'Centralized view of active, stale, and review-needed field devices',
   },
 ];
 
@@ -99,7 +99,7 @@ export function FeaturesSection() {
             </span>
           </h2>
           <p className="text-gray-400 text-lg max-w-2xl mx-auto">
-            Comprehensive tools for modern law enforcement operations
+            A combined Silverline interface for Sentinel central operations
           </p>
         </motion.div>
 
