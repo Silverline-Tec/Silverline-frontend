@@ -61,7 +61,7 @@ export function HeroSection() {
 
         {/* Subheading */}
         <motion.p variants={itemVariants} className="text-lg md:text-xl text-gray-400 mb-8 max-w-2xl mx-auto leading-relaxed">
-          Real-time incident monitoring, edge-to-central replay visibility, and tactical dispatch workflows for resilient field operations
+          Monitor alerts, check field devices, and keep teams informed even when field equipment reconnects after being offline.
         </motion.p>
 
         {/* CTA Buttons */}
@@ -89,9 +89,9 @@ export function HeroSection() {
           className="mt-16 grid grid-cols-3 gap-4 max-w-lg mx-auto"
         >
           {[
-            { label: 'Edge Nodes', value: 'LIVE' },
-            { label: 'Central Sync', value: 'ON' },
-            { label: 'Replay Safe', value: 'YES' },
+            { label: 'Field Devices', value: 'LIVE' },
+            { label: 'Main System', value: 'ON' },
+            { label: 'Works Offline', value: 'YES' },
           ].map((stat, index) => (
             <motion.div
               key={index}

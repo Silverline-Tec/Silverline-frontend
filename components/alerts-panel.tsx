@@ -155,7 +155,7 @@ function mapIncidentToAlert(incident: IncidentSummary): Alert {
   return {
     id: String(incident.incidentId),
     title: titleCase(incident.eventType),
-    description: `Site: ${incident.locationLabel ?? 'unknown site'} - Device: ${incident.nodeId ?? 'not assigned'} - Confidence: ${(incident.confidence * 100).toFixed(0)}%`,
+    description: `Site: ${incident.locationLabel ?? 'unknown site'} - Device: ${incident.nodeId ?? 'not assigned'} - Certainty: ${(incident.confidence * 100).toFixed(0)}%`,
     level:
       incident.priority === 'critical'
         ? 'high'

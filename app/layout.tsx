@@ -8,7 +8,7 @@ const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: 'Silverline Sentinel - Tactical Command Center',
-  description: 'Sentinel central dashboard for live incidents, field nodes, replay pressure, and operator response workflows.',
+  description: 'Sentinel dashboard for live alerts, field devices, system health, and operator response.',
   generator: 'Silverline Sentinel',
   icons: {
     icon: [

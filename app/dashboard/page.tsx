@@ -428,9 +428,9 @@ function buildHeaderMetrics({
       ];
     case 'analytics':
       return [
-        { icon: Database, label: 'Waiting To Send', value: formatCount(backlogPending), color: backlogPending > 0 ? 'yellow' : 'green' },
+        { icon: Database, label: 'Waiting to Send', value: formatCount(backlogPending), color: backlogPending > 0 ? 'yellow' : 'green' },
         { icon: Clock, label: 'Waiting Time', value: formatDuration(backlogAgeSeconds), color: backlogAgeSeconds > 60 ? 'yellow' : 'cyan' },
-        { icon: Gauge, label: 'Slowed Requests', value: formatCount(rateLimitedTotal), color: rateLimitedTotal > 0 ? 'yellow' : 'green' },
+        { icon: Gauge, label: 'Slowed Updates', value: formatCount(rateLimitedTotal), color: rateLimitedTotal > 0 ? 'yellow' : 'green' },
         { icon: BarChart3, label: 'Unusual Devices', value: formatCount(baselineBreaches), color: baselineBreaches > 0 ? 'red' : 'green' },
       ];
     case 'settings':
@@ -438,7 +438,7 @@ function buildHeaderMetrics({
         { icon: Server, label: 'Main System', value: error ? 'DOWN' : 'OK', color: error ? 'red' : 'green' },
         { icon: Wifi, label: 'Last Update', value: lastSyncAt ? formatRelativeTime(lastSyncAt) : 'WAITING', color: lastSyncAt ? 'cyan' : 'yellow' },
         { icon: RefreshCw, label: 'Auto Refresh', value: `${REFRESH_INTERVAL_MS / 1000}s`, color: 'cyan' },
-        { icon: ShieldCheck, label: 'Security Blocks', value: formatCount(authFailuresTotal), color: authFailuresTotal > 0 ? 'red' : 'green' },
+        { icon: ShieldCheck, label: 'Blocked Access', value: formatCount(authFailuresTotal), color: authFailuresTotal > 0 ? 'red' : 'green' },
       ];
     default:
       return [

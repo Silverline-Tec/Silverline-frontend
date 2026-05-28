@@ -51,7 +51,7 @@ export default function Home() {
           </div>
           <div className="border-t border-cyan-400/20 pt-8 flex flex-col md:flex-row justify-between items-center text-gray-500 text-sm">
             <p>&copy; 2026 Silverline Sentinel. All rights reserved.</p>
-            <p>Resilient field intelligence for central operations</p>
+            <p>Clear field awareness for teams that need to respond quickly</p>
           </div>
         </div>
       </footer>

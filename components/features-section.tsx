@@ -17,43 +17,43 @@ import { TacticalCard } from './tactical-card';
 const features = [
   {
     icon: Camera,
-    title: 'Field Node Feeds',
-    description: 'Live node health, stream placeholders, battery state, and central visibility',
+    title: 'Field Devices',
+    description: 'See device connection, battery level, and camera readiness in one place.',
   },
   {
     icon: AlertCircle,
-    title: 'Incident Alerts',
-    description: 'Critical incident queue backed by Sentinel central alerting and deduplication',
+    title: 'Urgent Alerts',
+    description: 'Review important alerts and clear them once operators have responded.',
   },
   {
     icon: MapPin,
-    title: 'Tactical Positioning',
-    description: 'Derived field-node grid until backend GPS coordinates are available',
+    title: 'Device Map',
+    description: 'See where field devices are reporting from across the operating area.',
   },
   {
     icon: BarChart3,
-    title: 'Control Analytics',
-    description: 'Incident totals, stale nodes, replay pressure, and recovery backlog metrics',
+    title: 'System Health',
+    description: 'Check whether alerts, device updates, and system traffic are flowing normally.',
   },
   {
     icon: Lock,
-    title: 'Safe API Proxy',
-    description: 'Dashboard API keys stay server-side through Next.js control routes',
+    title: 'Protected Access',
+    description: 'Sensitive connection keys stay hidden on the server, away from the browser.',
   },
   {
     icon: Radio,
-    title: 'Edge Replay',
-    description: 'Visibility into central recovery pressure when edge nodes reconnect',
+    title: 'Offline Recovery',
+    description: 'Field equipment can catch up safely after losing connection.',
   },
   {
     icon: Zap,
     title: 'Operator Response',
-    description: 'Acknowledge and close incidents through the central backend workflow',
+    description: 'Mark alerts as handled so the team can see what still needs attention.',
   },
   {
     icon: Users,
     title: 'Fleet Overview',
-    description: 'Centralized view of active, stale, and review-needed field devices',
+    description: 'See which devices are online, not reporting, or need a check.',
   },
 ];
 
@@ -99,7 +99,7 @@ export function FeaturesSection() {
             </span>
           </h2>
           <p className="text-gray-400 text-lg max-w-2xl mx-auto">
-            A combined Silverline interface for Sentinel central operations
+            A clear Silverline view for teams monitoring Sentinel in the field.
           </p>
         </motion.div>
 
