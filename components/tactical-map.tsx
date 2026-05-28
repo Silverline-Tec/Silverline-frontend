@@ -27,9 +27,18 @@ const mockNodes: NodeMarker[] = [
 interface TacticalMapProps {
   devices?: DeviceSummary[];
   loading?: boolean;
+  heading?: string;
+  loadingDescription?: string;
+  readyDescription?: string;
 }
 
-export function TacticalMap({ devices, loading = false }: TacticalMapProps) {
+export function TacticalMap({
+  devices,
+  loading = false,
+  heading = 'Tactical Map',
+  loadingDescription = 'Pulling field-node positions',
+  readyDescription = 'Derived field-node positions from central state',
+}: TacticalMapProps) {
   const nodes = devices == null ? mockNodes : devices.slice(0, 18).map(mapDeviceToNodeMarker);
   const activeCount = nodes.filter((node) => node.status === 'active').length;
 
@@ -39,12 +48,12 @@ export function TacticalMap({ devices, loading = false }: TacticalMapProps) {
         <div>
           <h2 className="text-2xl font-bold text-cyan-300 mb-2 flex items-center gap-2">
             <MapPin className="w-6 h-6" />
-            Tactical Map
+            {heading}
           </h2>
           <p className="text-gray-400 text-sm">
             {loading && nodes.length === 0
-              ? 'Pulling field-node positions'
-              : 'Derived field-node positions from central state'}
+              ? loadingDescription
+              : readyDescription}
           </p>
         </div>
         <div className="flex items-center gap-2 px-3 py-1 rounded border border-cyan-400/30 bg-cyan-400/5">

@@ -41,9 +41,22 @@ const initialAlerts: Alert[] = [
 interface AlertsPanelProps {
   incidents?: IncidentSummary[];
   loading?: boolean;
+  heading?: string;
+  loadingDescription?: string;
+  countDescription?: (count: number) => string;
+  emptyStatus?: string;
+  emptyMessage?: string;
 }
 
-export function AlertsPanel({ incidents, loading = false }: AlertsPanelProps) {
+export function AlertsPanel({
+  incidents,
+  loading = false,
+  heading = 'Active Alerts',
+  loadingDescription = 'Pulling central incident queue',
+  countDescription = (count) => `${count} alert${count !== 1 ? 's' : ''} requiring attention`,
+  emptyStatus = '✓ ALL SYSTEMS NORMAL',
+  emptyMessage = 'No active alerts at this time',
+}: AlertsPanelProps) {
   const [fallbackAlerts, setFallbackAlerts] = useState<Alert[]>(initialAlerts);
   const [dismissedIncidentIds, setDismissedIncidentIds] = useState<Set<number>>(new Set());
 
@@ -79,12 +92,12 @@ export function AlertsPanel({ incidents, loading = false }: AlertsPanelProps) {
         <div>
           <h2 className="text-2xl font-bold text-cyan-300 mb-2 flex items-center gap-2">
             <Zap className="w-6 h-6 text-red-400" />
-            Active Alerts
+            {heading}
           </h2>
           <p className="text-gray-400 text-sm">
             {loading && alerts.length === 0
-              ? 'Pulling central incident queue'
-              : `${alerts.length} alert${alerts.length !== 1 ? 's' : ''} requiring attention`}
+              ? loadingDescription
+              : countDescription(alerts.length)}
           </p>
         </div>
         {alerts.length > 0 && (
@@ -129,8 +142,8 @@ export function AlertsPanel({ incidents, loading = false }: AlertsPanelProps) {
             exit={{ opacity: 0 }}
             className="border border-green-400/30 rounded-lg p-8 text-center bg-green-950/10 backdrop-blur-sm"
           >
-            <div className="text-green-400 text-sm font-mono mb-2">✓ ALL SYSTEMS NORMAL</div>
-            <p className="text-gray-400">No active alerts at this time</p>
+            <div className="text-green-400 text-sm font-mono mb-2">{emptyStatus}</div>
+            <p className="text-gray-400">{emptyMessage}</p>
           </motion.div>
         )}
       </AnimatePresence>

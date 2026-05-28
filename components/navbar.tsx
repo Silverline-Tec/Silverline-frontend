@@ -11,6 +11,7 @@ export function Navbar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const isDashboard = pathname.startsWith('/dashboard');
 
   useEffect(() => {
     const handleScroll = () => {
@@ -50,16 +51,27 @@ export function Navbar() {
   return (
     <nav
       className={cn(
-        'fixed top-0 left-0 right-0 z-50 transition-all duration-300',
-        scrolled
-          ? 'bg-black/40 backdrop-blur-xl border-b border-cyan-400/20 shadow-[0_0_20px_rgba(0,212,255,0.1)]'
+        'fixed left-0 right-0 top-0 z-50 transition-all duration-300',
+        scrolled || isDashboard
+          ? 'border-b border-cyan-400/20 bg-[#050a1d]/85 shadow-[0_0_20px_rgba(0,212,255,0.1)] backdrop-blur-xl'
           : 'bg-transparent'
       )}
     >
-      <div className="mx-auto w-full max-w-[92rem] px-3 sm:px-5 lg:px-8">
+      <div
+        className={cn(
+          'mx-auto w-full px-3 sm:px-5',
+          isDashboard ? 'max-w-none lg:px-0' : 'max-w-[92rem] lg:px-8'
+        )}
+      >
         <div className="flex h-14 items-center gap-3 sm:h-16 lg:gap-6">
           {/* Logo */}
-          <Link href="/" className="group flex min-w-0 shrink-0 items-center gap-2 sm:gap-3">
+          <Link
+            href="/"
+            className={cn(
+              'group flex min-w-0 shrink-0 items-center gap-2 sm:gap-3',
+              isDashboard && 'md:h-full md:w-60 md:border-r md:border-cyan-400/15 md:px-4 lg:px-5'
+            )}
+          >
             <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded bg-cyan-400 transition-shadow group-hover:shadow-[0_0_15px_rgba(0,212,255,0.5)] sm:h-9 sm:w-9">
               <div className="h-2 w-2 rounded-full bg-black" />
             </div>
@@ -74,33 +86,40 @@ export function Navbar() {
           </Link>
 
           {/* Desktop Navigation */}
-          <div className="hidden min-w-0 flex-1 items-center justify-center lg:flex">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                target={item.external ? '_blank' : undefined}
-                rel={item.external ? 'noreferrer' : undefined}
-                className={cn(
-                  'relative rounded-full px-3 py-2 pb-2 text-xs font-mono tracking-[0.22em] transition-all duration-300 xl:px-4 xl:text-sm',
-                  !item.external && isActive(item.href)
-                    ? 'bg-cyan-400/10 text-cyan-300'
-                    : 'text-gray-400 hover:bg-cyan-400/10 hover:text-cyan-300'
-                )}
-              >
-                {item.label}
-                {!item.external && isActive(item.href) && (
-                  <motion.div
-                    layoutId="underline"
-                    className="absolute bottom-1 left-3 right-3 h-0.5 bg-gradient-to-r from-cyan-400 to-cyan-500"
-                  />
-                )}
-              </Link>
-            ))}
+          <div
+            className={cn(
+              'hidden min-w-0 flex-1 items-center lg:flex',
+              isDashboard ? 'justify-start px-2 xl:px-4' : 'justify-center'
+            )}
+          >
+            <div className="flex min-w-0 items-center gap-1 rounded-full border border-cyan-400/10 bg-cyan-400/[0.04] p-1 shadow-[inset_0_0_20px_rgba(0,212,255,0.04)]">
+              {navItems.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  target={item.external ? '_blank' : undefined}
+                  rel={item.external ? 'noreferrer' : undefined}
+                  className={cn(
+                    'relative rounded-full px-3 py-2 text-xs font-mono tracking-[0.2em] transition-all duration-300 xl:px-4 xl:text-sm',
+                    !item.external && isActive(item.href)
+                      ? 'bg-cyan-400/15 text-cyan-200 shadow-[0_0_18px_rgba(0,212,255,0.12)]'
+                      : 'text-gray-400 hover:bg-cyan-400/10 hover:text-cyan-300'
+                  )}
+                >
+                  {item.label}
+                  {!item.external && isActive(item.href) && (
+                    <motion.div
+                      layoutId="underline"
+                      className="absolute bottom-1 left-3 right-3 h-0.5 bg-gradient-to-r from-cyan-400 to-cyan-500"
+                    />
+                  )}
+                </Link>
+              ))}
+            </div>
           </div>
 
           {/* Status Badge */}
-          <div className="ml-auto hidden shrink-0 items-center gap-2 rounded border border-green-400/30 bg-green-950/20 px-2.5 py-1 sm:flex lg:ml-0 xl:px-3">
+          <div className="ml-auto hidden shrink-0 items-center gap-2 rounded border border-green-400/30 bg-green-950/20 px-2.5 py-1 sm:flex lg:ml-0 lg:mr-5 xl:px-3">
             <div className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
             <span className="hidden text-[0.68rem] font-mono tracking-[0.18em] text-green-300 xl:inline">
               SYSTEM ONLINE

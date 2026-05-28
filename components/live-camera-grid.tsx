@@ -29,9 +29,20 @@ const mockCameras: CameraFeed[] = [
 interface LiveCameraGridProps {
   devices?: DeviceSummary[];
   loading?: boolean;
+  heading?: string;
+  loadingDescription?: string;
+  readyDescription?: string;
+  emptyMessage?: string;
 }
 
-export function LiveCameraGrid({ devices, loading = false }: LiveCameraGridProps) {
+export function LiveCameraGrid({
+  devices,
+  loading = false,
+  heading = 'Live Field Feeds',
+  loadingDescription = 'Pulling field-node state from Sentinel central',
+  readyDescription = 'Real-time monitoring of connected field nodes',
+  emptyMessage = 'No field nodes are visible from the central backend yet.',
+}: LiveCameraGridProps) {
   const [muted, setMuted] = useState<Set<string>>(new Set());
   const [fullscreen, setFullscreen] = useState<string | null>(null);
   const cameraFeeds = devices == null ? mockCameras : devices.slice(0, 12).map(mapDeviceToCamera);
@@ -72,11 +83,11 @@ export function LiveCameraGrid({ devices, loading = false }: LiveCameraGridProps
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-2xl font-bold text-cyan-300 mb-2">Live Field Feeds</h2>
+        <h2 className="text-2xl font-bold text-cyan-300 mb-2">{heading}</h2>
         <p className="text-gray-400 text-sm">
           {loading && cameraFeeds.length === 0
-            ? 'Pulling field-node state from Sentinel central'
-            : 'Real-time monitoring of connected field nodes'}
+            ? loadingDescription
+            : readyDescription}
         </p>
       </div>
 
@@ -169,7 +180,7 @@ export function LiveCameraGrid({ devices, loading = false }: LiveCameraGridProps
           <div className="md:col-span-2 lg:col-span-3">
             <TacticalCard glow="cyan">
               <p className="text-sm text-gray-400">
-                No field nodes are visible from the central backend yet.
+                {emptyMessage}
               </p>
             </TacticalCard>
           </div>

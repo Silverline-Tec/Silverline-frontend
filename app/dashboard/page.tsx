@@ -7,7 +7,23 @@ import { AlertsPanel } from '@/components/alerts-panel';
 import { LiveCameraGrid } from '@/components/live-camera-grid';
 import { TacticalMap } from '@/components/tactical-map';
 import { motion } from 'framer-motion';
-import { BarChart3, Activity, Users, AlertTriangle, RefreshCw } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  BarChart3,
+  Battery,
+  Clock,
+  Database,
+  Gauge,
+  type LucideIcon,
+  MapPin,
+  Radio,
+  RefreshCw,
+  Server,
+  ShieldCheck,
+  Users,
+  Wifi,
+} from 'lucide-react';
 import { TacticalCard } from '@/components/tactical-card';
 import { readControlJson } from '@/lib/control-client';
 import type {
@@ -18,6 +34,42 @@ import type {
 } from '@/lib/control-types';
 
 const REFRESH_INTERVAL_MS = 10_000;
+
+type AlertsPanelCopy = Pick<
+  React.ComponentProps<typeof AlertsPanel>,
+  'heading' | 'loadingDescription' | 'countDescription' | 'emptyStatus' | 'emptyMessage'
+>;
+type TacticalMapCopy = Pick<
+  React.ComponentProps<typeof TacticalMap>,
+  'heading' | 'loadingDescription' | 'readyDescription'
+>;
+type LiveFeedCopy = Pick<
+  React.ComponentProps<typeof LiveCameraGrid>,
+  'heading' | 'loadingDescription' | 'readyDescription' | 'emptyMessage'
+>;
+
+interface SectionCopy {
+  alerts: AlertsPanelCopy;
+  map: TacticalMapCopy;
+  feeds: LiveFeedCopy;
+  analytics: {
+    heading: string;
+    description: string;
+  };
+  settings: {
+    heading: string;
+    description: string;
+  };
+}
+
+type MetricColor = 'cyan' | 'red' | 'yellow' | 'green';
+
+interface HeaderMetric {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  color: MetricColor;
+}
 
 export default function Dashboard() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -94,14 +146,19 @@ export default function Dashboard() {
   const activeDevices = devices.filter((device) => device.status === 'active' && !device.isStale).length;
   const nodeUptime =
     devices.length === 0 ? null : Math.round((activeDevices / devices.length) * 1000) / 10;
-
-  const statCards = [
-    { icon: Users, label: 'Nodes Online', value: formatCount(dashboardStats.activeDevices), color: 'cyan' },
-    { icon: Activity, label: 'Active Incidents', value: formatCount(dashboardStats.openIncidents), color: 'red' },
-    { icon: AlertTriangle, label: 'Critical Alerts', value: formatCount(dashboardStats.criticalIncidents), color: 'yellow' },
-    { icon: BarChart3, label: 'Node Uptime', value: nodeUptime == null ? '--' : `${nodeUptime}%`, color: 'green' },
-  ];
+  const statCards = buildHeaderMetrics({
+    view: activeView,
+    dashboardStats,
+    devices,
+    incidents,
+    openIncidents,
+    nodeUptime,
+    systemSnapshot,
+    error,
+    lastSyncAt,
+  });
   const viewMeta = getViewMeta(activeView);
+  const sectionCopy = getSectionCopy(activeView);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -132,7 +189,7 @@ export default function Dashboard() {
                 </p>
                 {lastSyncAt && (
                   <p className="mt-2 text-xs font-mono text-gray-500">
-                    LAST CENTRAL SYNC {formatRelativeTime(lastSyncAt)}
+                    LAST UPDATE FROM MAIN SYSTEM {formatRelativeTime(lastSyncAt)}
                   </p>
                 )}
               </div>
@@ -144,14 +201,14 @@ export default function Dashboard() {
                 className="inline-flex w-fit items-center gap-2 rounded border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-xs font-mono uppercase tracking-wider text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-                Sync Live
+                Refresh Now
               </button>
             </div>
           </motion.div>
 
           {error && (
             <div className="mb-8 rounded-lg border border-red-400/30 bg-red-950/20 p-4 text-sm text-red-100">
-              <div className="font-mono text-xs uppercase tracking-wider text-red-300">Control link degraded</div>
+              <div className="font-mono text-xs uppercase tracking-wider text-red-300">Main system connection problem</div>
               <p className="mt-2">{error}</p>
             </div>
           )}
@@ -165,7 +222,7 @@ export default function Dashboard() {
           >
             {statCards.map((stat, index) => {
               const Icon = stat.icon;
-              const colorMap = {
+              const colorMap: Record<MetricColor, string> = {
                 cyan: 'border-cyan-400/30 shadow-[0_0_15px_rgba(0,212,255,0.2)]',
                 red: 'border-red-400/30 shadow-[0_0_15px_rgba(255,23,68,0.2)]',
                 yellow: 'border-yellow-400/30 shadow-[0_0_15px_rgba(250,204,21,0.2)]',
@@ -182,7 +239,7 @@ export default function Dashboard() {
                 >
                   <div
                     className={`border rounded-lg p-6 backdrop-blur-md bg-card/40 flex items-start justify-between ${
-                      colorMap[stat.color as keyof typeof colorMap]
+                      colorMap[stat.color]
                     } transition-all duration-300`}
                   >
                     <div>
@@ -205,8 +262,8 @@ export default function Dashboard() {
                   transition={{ duration: 0.5, delay: 0.2 }}
                   className="lg:col-span-1 space-y-8"
                 >
-                  <AlertsPanel incidents={openIncidents} loading={loading} />
-                  <TacticalMap devices={devices} loading={loading} />
+                  <AlertsPanel incidents={openIncidents} loading={loading} {...sectionCopy.alerts} />
+                  <TacticalMap devices={devices} loading={loading} {...sectionCopy.map} />
                 </motion.div>
 
                 <motion.div
@@ -215,13 +272,14 @@ export default function Dashboard() {
                   transition={{ duration: 0.5, delay: 0.2 }}
                   className="lg:col-span-2"
                 >
-                  <LiveCameraGrid devices={devices} loading={loading} />
+                  <LiveCameraGrid devices={devices} loading={loading} {...sectionCopy.feeds} />
                 </motion.div>
               </div>
 
               <DashboardAnalytics
                 dashboardStats={dashboardStats}
                 systemSnapshot={systemSnapshot}
+                {...sectionCopy.analytics}
               />
             </>
           )}
@@ -233,7 +291,7 @@ export default function Dashboard() {
               transition={{ duration: 0.35 }}
               className="max-w-4xl"
             >
-              <AlertsPanel incidents={openIncidents} loading={loading} />
+              <AlertsPanel incidents={openIncidents} loading={loading} {...sectionCopy.alerts} />
             </motion.section>
           )}
 
@@ -244,7 +302,7 @@ export default function Dashboard() {
               transition={{ duration: 0.35 }}
               className="max-w-3xl"
             >
-              <TacticalMap devices={devices} loading={loading} />
+              <TacticalMap devices={devices} loading={loading} {...sectionCopy.map} />
             </motion.section>
           )}
 
@@ -254,7 +312,7 @@ export default function Dashboard() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.35 }}
             >
-              <LiveCameraGrid devices={devices} loading={loading} />
+              <LiveCameraGrid devices={devices} loading={loading} {...sectionCopy.feeds} />
             </motion.section>
           )}
 
@@ -262,6 +320,7 @@ export default function Dashboard() {
             <DashboardAnalytics
               dashboardStats={dashboardStats}
               systemSnapshot={systemSnapshot}
+              {...sectionCopy.analytics}
             />
           )}
 
@@ -271,6 +330,7 @@ export default function Dashboard() {
               lastSyncAt={lastSyncAt}
               refreshing={refreshing}
               onRefresh={() => void refreshDashboard('manual')}
+              {...sectionCopy.settings}
             />
           )}
         </div>
@@ -306,12 +366,100 @@ function buildAnalyticsBars(stats: DashboardStats, systemSnapshot: SystemSnapsho
   ].map((value) => Math.max(8, Math.min(100, value * 12)));
 }
 
+function buildHeaderMetrics({
+  view,
+  dashboardStats,
+  devices,
+  incidents,
+  openIncidents,
+  nodeUptime,
+  systemSnapshot,
+  error,
+  lastSyncAt,
+}: {
+  view: DashboardView;
+  dashboardStats: DashboardStats;
+  devices: DeviceSummary[];
+  incidents: IncidentSummary[];
+  openIncidents: IncidentSummary[];
+  nodeUptime: number | null;
+  systemSnapshot: SystemSnapshot | null;
+  error: string | null;
+  lastSyncAt: string | null;
+}): HeaderMetric[] {
+  const criticalOpen = openIncidents.filter((incident) => incident.priority === 'critical').length;
+  const dedupWatch = incidents.filter((incident) => incident.dedupUncertain).length;
+  const staleDevices = devices.filter((device) => device.isStale).length;
+  const needsReviewDevices = devices.filter((device) => device.status === 'needs_review').length;
+  const knownBatteryLevels = devices
+    .map((device) => device.batteryLevel)
+    .filter((level): level is number => typeof level === 'number' && Number.isFinite(level));
+  const averageBattery =
+    knownBatteryLevels.length === 0
+      ? null
+      : Math.round(knownBatteryLevels.reduce((sum, level) => sum + level, 0) / knownBatteryLevels.length);
+  const backlogPending = systemSnapshot?.metrics.recoveryBacklogPending ?? 0;
+  const backlogAgeSeconds = systemSnapshot?.metrics.queueBacklogOldestAgeSeconds ?? 0;
+  const rateLimitedTotal = systemSnapshot?.metrics.ingestRateLimitedTotal ?? 0;
+  const authFailuresTotal = systemSnapshot?.metrics.ingestAuthFailuresTotal ?? 0;
+  const baselineBreaches = systemSnapshot?.metrics.nodesExceedingBaseline ?? dashboardStats.nodesExceedingBaseline;
+
+  switch (view) {
+    case 'alerts':
+      return [
+        { icon: Activity, label: 'Open Alerts', value: formatCount(openIncidents.length), color: 'red' },
+        { icon: AlertTriangle, label: 'Critical Alerts', value: formatCount(criticalOpen), color: 'yellow' },
+        { icon: Clock, label: 'New This Hour', value: formatCount(dashboardStats.incidentsLastHour), color: 'cyan' },
+        { icon: ShieldCheck, label: 'Possible Repeats', value: formatCount(dedupWatch), color: dedupWatch > 0 ? 'yellow' : 'green' },
+      ];
+    case 'map':
+      return [
+        { icon: MapPin, label: 'Devices Shown', value: formatCount(devices.length), color: 'cyan' },
+        { icon: Users, label: 'Devices Online', value: formatCount(dashboardStats.activeDevices), color: 'green' },
+        { icon: AlertTriangle, label: 'Not Reporting', value: formatCount(staleDevices), color: staleDevices > 0 ? 'yellow' : 'green' },
+        { icon: Gauge, label: 'Online Rate', value: nodeUptime == null ? '--' : `${nodeUptime}%`, color: 'cyan' },
+      ];
+    case 'feeds':
+      return [
+        { icon: Radio, label: 'Live Devices', value: formatCount(dashboardStats.activeDevices), color: 'cyan' },
+        { icon: AlertTriangle, label: 'Not Reporting', value: formatCount(staleDevices), color: staleDevices > 0 ? 'yellow' : 'green' },
+        { icon: Battery, label: 'Average Battery', value: averageBattery == null ? '--' : `${averageBattery}%`, color: averageBattery != null && averageBattery < 30 ? 'red' : 'green' },
+        { icon: ShieldCheck, label: 'Needs Check', value: formatCount(needsReviewDevices), color: needsReviewDevices > 0 ? 'yellow' : 'green' },
+      ];
+    case 'analytics':
+      return [
+        { icon: Database, label: 'Waiting To Send', value: formatCount(backlogPending), color: backlogPending > 0 ? 'yellow' : 'green' },
+        { icon: Clock, label: 'Waiting Time', value: formatDuration(backlogAgeSeconds), color: backlogAgeSeconds > 60 ? 'yellow' : 'cyan' },
+        { icon: Gauge, label: 'Slowed Requests', value: formatCount(rateLimitedTotal), color: rateLimitedTotal > 0 ? 'yellow' : 'green' },
+        { icon: BarChart3, label: 'Unusual Devices', value: formatCount(baselineBreaches), color: baselineBreaches > 0 ? 'red' : 'green' },
+      ];
+    case 'settings':
+      return [
+        { icon: Server, label: 'Main System', value: error ? 'DOWN' : 'OK', color: error ? 'red' : 'green' },
+        { icon: Wifi, label: 'Last Update', value: lastSyncAt ? formatRelativeTime(lastSyncAt) : 'WAITING', color: lastSyncAt ? 'cyan' : 'yellow' },
+        { icon: RefreshCw, label: 'Auto Refresh', value: `${REFRESH_INTERVAL_MS / 1000}s`, color: 'cyan' },
+        { icon: ShieldCheck, label: 'Security Blocks', value: formatCount(authFailuresTotal), color: authFailuresTotal > 0 ? 'red' : 'green' },
+      ];
+    default:
+      return [
+        { icon: Users, label: 'Devices Online', value: formatCount(dashboardStats.activeDevices), color: 'cyan' },
+        { icon: Activity, label: 'Open Alerts', value: formatCount(dashboardStats.openIncidents), color: 'red' },
+        { icon: AlertTriangle, label: 'Critical Alerts', value: formatCount(dashboardStats.criticalIncidents), color: 'yellow' },
+        { icon: BarChart3, label: 'Online Rate', value: nodeUptime == null ? '--' : `${nodeUptime}%`, color: 'green' },
+      ];
+  }
+}
+
 function DashboardAnalytics({
   dashboardStats,
   systemSnapshot,
+  heading,
+  description,
 }: {
   dashboardStats: DashboardStats;
   systemSnapshot: SystemSnapshot | null;
+  heading: string;
+  description: string;
 }) {
   return (
     <motion.div
@@ -320,11 +468,14 @@ function DashboardAnalytics({
       transition={{ duration: 0.5 }}
       className="mt-8"
     >
-      <h2 className="text-2xl font-bold text-cyan-300 mb-4">System Analytics</h2>
+      <div className="mb-4">
+        <h2 className="text-2xl font-bold text-cyan-300">{heading}</h2>
+        <p className="mt-2 text-sm text-gray-400">{description}</p>
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <TacticalCard glow="cyan">
           <div className="space-y-4">
-            <h3 className="font-bold text-cyan-300">Control Snapshot</h3>
+            <h3 className="font-bold text-cyan-300">Current System Picture</h3>
             <div className="h-32 flex items-end justify-around gap-2">
               {buildAnalyticsBars(dashboardStats, systemSnapshot).map((value, i) => (
                 <motion.div
@@ -336,22 +487,22 @@ function DashboardAnalytics({
                 />
               ))}
             </div>
-            <div className="text-center text-sm text-gray-400">Incidents, nodes, and replay pressure</div>
+            <div className="text-center text-sm text-gray-400">Alerts, devices, and data waiting to be sent</div>
           </div>
         </TacticalCard>
 
         <TacticalCard glow="green">
           <div className="space-y-4">
-            <h3 className="font-bold text-cyan-300">Recovery Backlog Age</h3>
+            <h3 className="font-bold text-cyan-300">Oldest Waiting Data</h3>
             <div className="text-center">
               <div className="text-4xl font-bold text-green-400 mb-2">
                 {formatDuration(systemSnapshot?.metrics.queueBacklogOldestAgeSeconds ?? 0)}
               </div>
-              <p className="text-sm text-gray-400">Oldest central recovery backlog item</p>
+              <p className="text-sm text-gray-400">Oldest item still waiting for the main system</p>
             </div>
             <div className="flex justify-around text-xs text-gray-400 pt-4 border-t border-cyan-400/20">
-              <span>{formatCount(systemSnapshot?.metrics.recoveryBacklogPending ?? 0)} pending</span>
-              <span>{formatCount(systemSnapshot?.metrics.ingestRateLimitedTotal ?? 0)} rate-limited</span>
+              <span>{formatCount(systemSnapshot?.metrics.recoveryBacklogPending ?? 0)} waiting</span>
+              <span>{formatCount(systemSnapshot?.metrics.ingestRateLimitedTotal ?? 0)} slowed</span>
             </div>
           </div>
         </TacticalCard>
@@ -365,11 +516,15 @@ function DashboardSettings({
   lastSyncAt,
   refreshing,
   onRefresh,
+  heading,
+  description,
 }: {
   error: string | null;
   lastSyncAt: string | null;
   refreshing: boolean;
   onRefresh: () => void;
+  heading: string;
+  description: string;
 }) {
   return (
     <motion.section
@@ -378,29 +533,32 @@ function DashboardSettings({
       transition={{ duration: 0.35 }}
       className="max-w-4xl"
     >
-      <h2 className="text-2xl font-bold text-cyan-300 mb-4">Dashboard Settings</h2>
+      <div className="mb-4">
+        <h2 className="text-2xl font-bold text-cyan-300">{heading}</h2>
+        <p className="mt-2 text-sm text-gray-400">{description}</p>
+      </div>
       <TacticalCard glow={error ? 'red' : 'cyan'}>
         <div className="space-y-6">
           <div>
-            <h3 className="font-bold text-cyan-300">Control Backend</h3>
+            <h3 className="font-bold text-cyan-300">Main System Connection</h3>
             <p className="mt-2 text-sm text-gray-400">
-              The backend URL and dashboard API key are loaded server-side from this app&apos;s env file.
+              The dashboard connects to Sentinel using saved settings. The secret key stays on the server.
             </p>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <SettingReadout label="Backend state" value={error ? 'degraded' : 'reachable'} />
+            <SettingReadout label="Connection state" value={error ? 'problem detected' : 'connected'} />
             <SettingReadout
-              label="Last sync"
+              label="Last update"
               value={lastSyncAt ? formatRelativeTime(lastSyncAt) : 'waiting'}
             />
-            <SettingReadout label="Refresh cadence" value={`${REFRESH_INTERVAL_MS / 1000}s`} />
-            <SettingReadout label="Routing mode" value="single route" />
+            <SettingReadout label="Auto refresh" value={`${REFRESH_INTERVAL_MS / 1000}s`} />
+            <SettingReadout label="Page style" value="single page" />
           </div>
 
           {error && (
             <div className="rounded border border-red-400/30 bg-red-950/20 p-4 text-sm text-red-100">
-              <div className="font-mono text-xs uppercase tracking-wider text-red-300">Current backend error</div>
+              <div className="font-mono text-xs uppercase tracking-wider text-red-300">Current connection error</div>
               <p className="mt-2">{error}</p>
             </div>
           )}
@@ -412,7 +570,7 @@ function DashboardSettings({
             className="inline-flex items-center gap-2 rounded border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-xs font-mono uppercase tracking-wider text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-            Retry Backend Link
+            Try Connection Again
           </button>
         </div>
       </TacticalCard>
@@ -427,6 +585,185 @@ function SettingReadout({ label, value }: { label: string; value: string }) {
       <p className="mt-2 text-lg font-bold text-cyan-200">{value}</p>
     </div>
   );
+}
+
+function getSectionCopy(view: DashboardView): SectionCopy {
+  switch (view) {
+    case 'alerts':
+      return {
+        alerts: {
+          heading: 'Incident Triage Queue',
+          loadingDescription: 'Pulling open incidents from Sentinel central',
+          countDescription: (count) => `${count} open incident${count !== 1 ? 's' : ''} in the triage queue`,
+          emptyStatus: '✓ TRIAGE QUEUE CLEAR',
+          emptyMessage: 'No open incidents are waiting for operator action',
+        },
+        map: {
+          heading: 'Incident Source Map',
+          loadingDescription: 'Resolving incident source nodes',
+          readyDescription: 'Node positions associated with current alert traffic',
+        },
+        feeds: {
+          heading: 'Alert Source Feeds',
+          loadingDescription: 'Loading source-node feed status',
+          readyDescription: 'Field nodes associated with current alert traffic',
+          emptyMessage: 'No source-node feeds are attached to the current alert queue.',
+        },
+        analytics: {
+          heading: 'Alert Pressure Analytics',
+          description: 'Incident volume, severity mix, and central queue pressure for the triage lane.',
+        },
+        settings: {
+          heading: 'Alert Routing Controls',
+          description: 'Operator-facing notification ownership and central alert link state.',
+        },
+      };
+    case 'map':
+      return {
+        alerts: {
+          heading: 'Location-Linked Alerts',
+          loadingDescription: 'Pulling incidents with field-node context',
+          countDescription: (count) => `${count} alert${count !== 1 ? 's' : ''} linked to mapped nodes`,
+          emptyStatus: '✓ NO LOCATION ALERTS',
+          emptyMessage: 'No mapped nodes have active incidents right now',
+        },
+        map: {
+          heading: 'Field Positioning Grid',
+          loadingDescription: 'Pulling field-node positions',
+          readyDescription: 'Live central positions projected onto the tactical grid',
+        },
+        feeds: {
+          heading: 'Mapped Node Feeds',
+          loadingDescription: 'Loading mapped node feed state',
+          readyDescription: 'Feed readiness for nodes visible on the grid',
+          emptyMessage: 'No mapped field-node feeds are visible yet.',
+        },
+        analytics: {
+          heading: 'Coverage Analytics',
+          description: 'Mapped device visibility, stale-node pressure, and recovery backlog context.',
+        },
+        settings: {
+          heading: 'Map Data Controls',
+          description: 'Runtime state for central device-position reads and refresh cadence.',
+        },
+      };
+    case 'feeds':
+      return {
+        alerts: {
+          heading: 'Feed-Triggered Alerts',
+          loadingDescription: 'Pulling feed-linked incidents',
+          countDescription: (count) => `${count} feed-linked alert${count !== 1 ? 's' : ''} requiring review`,
+          emptyStatus: '✓ FEEDS QUIET',
+          emptyMessage: 'No connected feeds are producing active alerts',
+        },
+        map: {
+          heading: 'Feed Node Locations',
+          loadingDescription: 'Resolving feed-node positions',
+          readyDescription: 'Where visible feed nodes currently sit in the field',
+        },
+        feeds: {
+          heading: 'Live Feed Matrix',
+          loadingDescription: 'Pulling live field-node feed state',
+          readyDescription: 'Stream readiness, node health, and battery state from central',
+          emptyMessage: 'No live feed nodes are visible from Sentinel central yet.',
+        },
+        analytics: {
+          heading: 'Feed Health Analytics',
+          description: 'Device visibility, stale-node pressure, and stream readiness indicators.',
+        },
+        settings: {
+          heading: 'Feed Runtime Controls',
+          description: 'Frontend refresh behavior and backend link state for feed telemetry.',
+        },
+      };
+    case 'analytics':
+      return {
+        alerts: {
+          heading: 'Alert Metric Inputs',
+          loadingDescription: 'Pulling incident metrics from central',
+          countDescription: (count) => `${count} incident${count !== 1 ? 's' : ''} contributing to analytics`,
+          emptyStatus: '✓ NO INCIDENT LOAD',
+          emptyMessage: 'There are no active incidents contributing to pressure metrics',
+        },
+        map: {
+          heading: 'Node Metric Inputs',
+          loadingDescription: 'Pulling node state for analytics',
+          readyDescription: 'Device health contributing to central telemetry metrics',
+        },
+        feeds: {
+          heading: 'Feed Metric Inputs',
+          loadingDescription: 'Pulling field-node telemetry inputs',
+          readyDescription: 'Feed and device state currently feeding analytics',
+          emptyMessage: 'No feed telemetry is available for analytics yet.',
+        },
+        analytics: {
+          heading: 'Central Replay Analytics',
+          description: 'Queue depth, recovery age, ingest pressure, and incident health from Sentinel central.',
+        },
+        settings: {
+          heading: 'Analytics Runtime Controls',
+          description: 'Control link state and refresh cadence behind the analytics view.',
+        },
+      };
+    case 'settings':
+      return {
+        alerts: {
+          heading: 'Backend Link Alerts',
+          loadingDescription: 'Checking central control link incidents',
+          countDescription: (count) => `${count} backend-visible alert${count !== 1 ? 's' : ''}`,
+          emptyStatus: '✓ CONTROL LINK QUIET',
+          emptyMessage: 'No backend link alerts are visible from central',
+        },
+        map: {
+          heading: 'Configured Node Visibility',
+          loadingDescription: 'Checking configured node visibility',
+          readyDescription: 'Device visibility available to the current frontend runtime',
+        },
+        feeds: {
+          heading: 'Configured Feed Visibility',
+          loadingDescription: 'Checking configured feed visibility',
+          readyDescription: 'Feed telemetry available to the current frontend runtime',
+          emptyMessage: 'No feed telemetry is visible with the current backend configuration.',
+        },
+        analytics: {
+          heading: 'Runtime Diagnostics',
+          description: 'Control-plane link health, queue signals, and retry visibility for this dashboard.',
+        },
+        settings: {
+          heading: 'Control Link Configuration',
+          description: 'Environment-backed backend URL, dashboard key state, and refresh behavior.',
+        },
+      };
+    default:
+      return {
+        alerts: {
+          heading: 'Priority Alert Sweep',
+          loadingDescription: 'Pulling central incident queue',
+          countDescription: (count) => `${count} alert${count !== 1 ? 's' : ''} requiring attention`,
+          emptyStatus: '✓ ALL SYSTEMS NORMAL',
+          emptyMessage: 'No active alerts at this time',
+        },
+        map: {
+          heading: 'Tactical Map',
+          loadingDescription: 'Pulling field-node positions',
+          readyDescription: 'Derived field-node positions from central state',
+        },
+        feeds: {
+          heading: 'Live Field Feeds',
+          loadingDescription: 'Pulling field-node state from Sentinel central',
+          readyDescription: 'Real-time monitoring of connected field nodes',
+          emptyMessage: 'No field nodes are visible from the central backend yet.',
+        },
+        analytics: {
+          heading: 'Command Telemetry',
+          description: 'Incidents, node visibility, replay pressure, and recovery age in one pass.',
+        },
+        settings: {
+          heading: 'Dashboard Runtime',
+          description: 'Control link state and frontend runtime configuration.',
+        },
+      };
+  }
 }
 
 function getViewMeta(view: DashboardView) {
